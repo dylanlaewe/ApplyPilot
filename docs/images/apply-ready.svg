@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960" viewBox="0 0 1440 960" fill="none">
+  <rect width="1440" height="960" fill="#EEF3F8"/>
+  <rect x="56" y="40" width="1328" height="880" rx="36" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <rect x="96" y="96" width="1220" height="170" rx="30" fill="#ECFDF5" stroke="#A7F3D0"/>
+  <text x="128" y="148" fill="#047857" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">READY FOR REVIEW</text>
+  <text x="128" y="212" fill="#0F172A" font-family="Arial, sans-serif" font-size="44" font-weight="700">The safe parts are done.</text>
+  <text x="128" y="252" fill="#334155" font-family="Arial, sans-serif" font-size="24">Inspect the page in the browser, then submit on the job site yourself.</text>
+  <rect x="96" y="314" width="820" height="470" rx="30" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <text x="132" y="368" fill="#0F172A" font-family="Arial, sans-serif" font-size="36" font-weight="700">Nothing else needs your input.</text>
+  <text x="132" y="420" fill="#475569" font-family="Arial, sans-serif" font-size="24">ApplyPilot has done everything safe it can do on this page.</text>
+  <rect x="132" y="474" width="748" height="104" rx="24" fill="#F0FDF4" stroke="#BBF7D0"/>
+  <text x="164" y="514" fill="#166534" font-family="Arial, sans-serif" font-size="20" font-weight="700">Filled successfully</text>
+  <text x="164" y="552" fill="#0F172A" font-family="Arial, sans-serif" font-size="24">First name, last name, email, phone, LinkedIn, resume upload</text>
+  <rect x="132" y="620" width="290" height="64" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="182" y="660" fill="#0F172A" font-family="Arial, sans-serif" font-size="22" font-weight="700">Open application window</text>
+  <rect x="964" y="314" width="352" height="470" rx="30" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <text x="996" y="368" fill="#0F172A" font-family="Arial, sans-serif" font-size="34" font-weight="700">Before you submit</text>
+  <text x="996" y="432" fill="#334155" font-family="Arial, sans-serif" font-size="23">1. Review every filled answer</text>
+  <text x="996" y="478" fill="#334155" font-family="Arial, sans-serif" font-size="23">2. Continue through any remaining site pages</text>
+  <text x="996" y="524" fill="#334155" font-family="Arial, sans-serif" font-size="23">3. Use the site’s own final submit button</text>
+  <rect x="996" y="602" width="240" height="64" rx="22" fill="#0F172A"/>
+  <text x="1050" y="642" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="22" font-weight="700">Mark as submitted</text>
+</svg>

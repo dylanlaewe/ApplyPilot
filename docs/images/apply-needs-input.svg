@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960" viewBox="0 0 1440 960" fill="none">
+  <rect width="1440" height="960" fill="#EEF3F8"/>
+  <rect x="56" y="40" width="1328" height="880" rx="36" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <rect x="96" y="96" width="1220" height="150" rx="28" fill="#FEF3C7" stroke="#FCD34D"/>
+  <text x="128" y="144" fill="#92400E" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">NEEDS YOUR INPUT</text>
+  <text x="128" y="206" fill="#0F172A" font-family="Arial, sans-serif" font-size="42" font-weight="700">A few answers still need you.</text>
+  <rect x="96" y="288" width="820" height="536" rx="30" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <text x="132" y="340" fill="#64748B" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">QUESTION 1 OF 3</text>
+  <text x="132" y="404" fill="#0F172A" font-family="Arial, sans-serif" font-size="38" font-weight="700">Why are you interested in this role?</text>
+  <text x="132" y="454" fill="#475569" font-family="Arial, sans-serif" font-size="22">Saved evidence exists, but this answer still benefits from a quick review.</text>
+  <rect x="132" y="500" width="748" height="176" rx="24" fill="#F8FAFC" stroke="#CBD5E1"/>
+  <text x="164" y="544" fill="#64748B" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">SUGGESTED ANSWER</text>
+  <text x="164" y="596" fill="#0F172A" font-family="Arial, sans-serif" font-size="24">I like roles where I can improve real workflows, build dependable tools,</text>
+  <text x="164" y="632" fill="#0F172A" font-family="Arial, sans-serif" font-size="24">and pair strong user experience with practical technical execution.</text>
+  <rect x="132" y="716" width="208" height="64" rx="22" fill="#0F172A"/>
+  <text x="170" y="756" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="22" font-weight="700">Use this answer</text>
+  <rect x="360" y="716" width="170" height="64" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="408" y="756" fill="#0F172A" font-family="Arial, sans-serif" font-size="22" font-weight="700">Edit answer</text>
+  <rect x="550" y="716" width="170" height="64" rx="22" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="594" y="756" fill="#0F172A" font-family="Arial, sans-serif" font-size="22" font-weight="700">Skip for now</text>
+  <rect x="964" y="288" width="352" height="536" rx="30" fill="#FFFFFF" stroke="#D8E1EA"/>
+  <text x="996" y="340" fill="#0F172A" font-family="Arial, sans-serif" font-size="34" font-weight="700">Review queue</text>
+  <rect x="996" y="384" width="288" height="92" rx="22" fill="#FFF7ED" stroke="#FDBA74"/>
+  <text x="1020" y="420" fill="#9A3412" font-family="Arial, sans-serif" font-size="18" font-weight="700">Needs review</text>
+  <text x="1020" y="452" fill="#0F172A" font-family="Arial, sans-serif" font-size="22">Why are you interested in this role?</text>
+  <rect x="996" y="496" width="288" height="92" rx="22" fill="#FFF7ED" stroke="#FDBA74"/>
+  <text x="1020" y="532" fill="#9A3412" font-family="Arial, sans-serif" font-size="18" font-weight="700">Needs review</text>
+  <text x="1020" y="564" fill="#0F172A" font-family="Arial, sans-serif" font-size="22">Current company</text>
+  <rect x="996" y="608" width="288" height="92" rx="22" fill="#FEF2F2" stroke="#FCA5A5"/>
+  <text x="1020" y="644" fill="#B91C1C" font-family="Arial, sans-serif" font-size="18" font-weight="700">Sensitive</text>
+  <text x="1020" y="676" fill="#0F172A" font-family="Arial, sans-serif" font-size="22">Visa sponsorship</text>
+</svg>

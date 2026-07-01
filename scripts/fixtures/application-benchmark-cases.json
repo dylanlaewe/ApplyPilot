@@ -1,0 +1,168 @@
+[
+  {
+    "id": "dataiku-greenhouse",
+    "phase": 1,
+    "ats": "greenhouse",
+    "company": "Dataiku",
+    "roleTitle": "Fullstack Software Engineer - Business Solutions",
+    "url": "https://job-boards.greenhouse.io/dataiku/jobs/5963977004",
+    "active": true,
+    "tags": ["structured", "short-answer", "generatable"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "electrosoft-greenhouse",
+    "phase": 1,
+    "ats": "greenhouse",
+    "company": "Electrosoft",
+    "roleTitle": "Customer Support Representative I",
+    "url": "https://job-boards.greenhouse.io/electrosoft/jobs/4272628009?utm_source=chatgpt.com",
+    "active": false,
+    "tags": ["structured", "reference"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "verisign-greenhouse",
+    "phase": 1,
+    "ats": "greenhouse",
+    "company": "Verisign",
+    "roleTitle": "General Application, U.S. Positions",
+    "url": "https://job-boards.greenhouse.io/verisign/jobs/4403206003",
+    "active": false,
+    "tags": ["structured", "general-application"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "tevora-lever",
+    "phase": 2,
+    "ats": "lever",
+    "company": "Tevora",
+    "roleTitle": "Cybersecurity Internship Fall 2026 - Federal",
+    "url": "https://jobs.lever.co/tevora/335ec3e2-c7ee-4e4c-b4a9-04428999e954/apply",
+    "active": true,
+    "tags": ["structured", "metadata", "file_upload"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "elementsolutions-lever",
+    "phase": 2,
+    "ats": "lever",
+    "company": "Element Solutions",
+    "roleTitle": "Enhanced Direct Enrollment Product Owner",
+    "url": "https://jobs.lever.co/elementsolutions/6059374a-9253-4b7f-95ce-4f1f47fd7246/apply",
+    "active": false,
+    "tags": ["structured"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "swiftly-lever",
+    "phase": 2,
+    "ats": "lever",
+    "company": "Swiftly",
+    "roleTitle": "Senior Product Designer",
+    "url": "https://jobs.lever.co/goswift/d446e305-3904-4cc6-b11b-77a4aea2b0f3/apply",
+    "active": false,
+    "tags": ["structured"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "1password-ashby",
+    "phase": 3,
+    "ats": "ashby",
+    "company": "1Password",
+    "roleTitle": "Developer Intern, Trust Platforms - Fall 2026",
+    "url": "https://jobs.ashbyhq.com/1password/8f8774dc-e400-48b1-8100-c6840b8eaed1/application",
+    "active": true,
+    "tags": ["structured", "short-answer", "missing-fact"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "new-story-schools-ashby",
+    "phase": 3,
+    "ats": "ashby",
+    "company": "New Story Schools",
+    "roleTitle": "Special Education Teacher",
+    "url": "https://jobs.ashbyhq.com/new-story-schools-oh/a498d01c-cccb-4668-a7ff-4e06f3dde0bc/application",
+    "active": false,
+    "tags": ["structured"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "jcc-workable",
+    "phase": 4,
+    "ats": "workable",
+    "company": "JCC Greater Boston",
+    "roleTitle": "Camp Counselor",
+    "url": "https://apply.workable.com/jcc-greater-boston/j/388A8F957D/",
+    "active": true,
+    "tags": ["structured", "autocomplete"],
+    "expectedFieldTypes": ["text", "dropdown", "autocomplete", "file_upload"]
+  },
+  {
+    "id": "tp-link-workable",
+    "phase": 4,
+    "ats": "workable",
+    "company": "TP-Link",
+    "roleTitle": "Early Career System Hardware Design Engineer",
+    "url": "https://apply.workable.com/tp-link-usa-corp/j/428D85D8DC/",
+    "active": false,
+    "tags": ["structured"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "sf-smartrecruiters",
+    "phase": 4,
+    "ats": "smartrecruiters",
+    "company": "City and County of San Francisco",
+    "roleTitle": "Technology Engineer Associate",
+    "url": "https://jobs.smartrecruiters.com/cityandcountyofsanfrancisco1/3743990013780745-technology-engineer-associate-1041-applications-specialty-citywide-c00086-",
+    "active": false,
+    "tags": ["structured", "experimental"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "brown-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Brown University",
+    "roleTitle": "Associate Director",
+    "url": "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/jobs/details/Associate-Director--Community-Engaged-Data-and-Evaluation-Collaborative_REQ207311",
+    "active": false,
+    "tags": ["experimental", "workday"],
+    "expectedFieldTypes": ["text", "dropdown"]
+  },
+  {
+    "id": "iboss-jobvite",
+    "phase": 5,
+    "ats": "jobvite",
+    "company": "iboss",
+    "roleTitle": "Java Software Engineer - Remote",
+    "url": "https://jobs.jobvite.com/iboss/job/oev5zfw7/apply",
+    "active": true,
+    "tags": ["structured", "jobvite", "entry-action-free"],
+    "expectedFieldTypes": ["text", "file_upload", "navigation"]
+  },
+  {
+    "id": "excel-jobvite",
+    "phase": 5,
+    "ats": "jobvite",
+    "company": "Excel Academy",
+    "roleTitle": "High School History Teacher",
+    "url": "https://jobs.jobvite.com/excel/job/oQZ0zfw8",
+    "active": false,
+    "availabilityRegression": true,
+    "tags": ["regression", "site-unavailable", "jobvite"],
+    "expectedFieldTypes": ["site_availability"]
+  },
+  {
+    "id": "technical-support-icims",
+    "phase": 5,
+    "ats": "icims",
+    "company": "Manager, Technical Support",
+    "roleTitle": "Manager, Technical Support",
+    "url": "https://careers.icims.com/careers-home/jobs/6474?lang=en-gb",
+    "active": false,
+    "tags": ["experimental", "icims"],
+    "expectedFieldTypes": ["text", "dropdown"]
+  }
+]
