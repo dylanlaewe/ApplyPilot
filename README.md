@@ -19,6 +19,9 @@ ApplyPilot is a private alpha under active development.
 - Drafts grounded short answers when enough saved evidence exists.
 - Surfaces uncertain, sensitive, or unsupported questions for review.
 - Tracks application sessions locally.
+- Runs a compact readiness check before starting a new application.
+- Lets you report incorrect answers locally and optionally reuse approved corrections safely.
+- Exports a sanitized local dogfood report for private-alpha testing.
 - Preserves manual final review and manual submission.
 
 ## Safety model
@@ -109,6 +112,7 @@ npm run build
 5. Review questions that still need input.
 6. Inspect the live application in the browser window.
 7. Submit manually on the job site when you decide the application is ready.
+8. Record wrong-answer corrections when ApplyPilot fills something incorrectly.
 
 ## Testing
 
@@ -141,6 +145,7 @@ Notes:
 - The live benchmark uses public job application URLs that may expire or change without notice.
 - Benchmark output is intentionally kept local and ignored from Git.
 - A sanitized benchmark summary is documented in [docs/benchmark.md](docs/benchmark.md).
+- The private-alpha manual checklist lives in [docs/private-alpha-checklist.md](docs/private-alpha-checklist.md).
 
 ## Project structure
 
@@ -175,6 +180,7 @@ This repository does not claim encryption at rest, secure sync, or isolation fro
 - Login barriers, expired postings, and anti-automation friction can block autofill progress.
 - Generated short answers still require human review.
 - Final submit actions are always manual.
+- Dogfood reporting is local-first and intentionally redacted by default.
 
 ## Roadmap
 

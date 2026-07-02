@@ -10,7 +10,7 @@ import { ApplicationsWorkspace } from "@/components/ApplicationsWorkspace";
 import { SettingsWorkspace } from "@/components/SettingsWorkspace";
 import { normalizeApplicationSession } from "@/lib/applicationsExperience";
 import { createDefaultSettings } from "@/lib/settings";
-import { ApplicationSession, DetectedField } from "@/types";
+import { ApplicationSession, DetectedField, DogfoodReport } from "@/types";
 
 import { setupDom } from "./test-helpers";
 
@@ -100,6 +100,40 @@ function makeSession(overrides: Partial<ApplicationSession> = {}) {
         autofillRetries: 1
       }
   });
+}
+
+function makeDogfoodReport(overrides: Partial<DogfoodReport> = {}): DogfoodReport {
+  return {
+    generatedAt: "2026-07-02T14:00:00.000Z",
+    applicationsPrepared: 2,
+    medianPreparationTimeSeconds: 138,
+    averageAutomaticCompletionRate: 81.2,
+    averageUserInputFields: 2,
+    averageCorrections: 1,
+    retryCount: 1,
+    severeCorrections: 1,
+    applicationsByAts: [
+      { atsProvider: "greenhouse", count: 1 },
+      { atsProvider: "lever", count: 1 },
+      { atsProvider: "ashby", count: 0 },
+      { atsProvider: "workable", count: 0 },
+      { atsProvider: "workday", count: 0 },
+      { atsProvider: "generic", count: 0 }
+    ],
+    shortAnswersInserted: 3,
+    shortAnswersEdited: 1,
+    shortAnswersAcceptedUnchanged: 2,
+    finalStates: [
+      { status: "in_progress", count: 1 },
+      { status: "ready_to_review", count: 1 },
+      { status: "submitted", count: 0 },
+      { status: "interview", count: 0 },
+      { status: "offer", count: 0 },
+      { status: "rejected", count: 0 },
+      { status: "archived", count: 0 }
+    ],
+    ...overrides
+  };
 }
 
 function createSettingsView() {
@@ -328,6 +362,7 @@ test("applications detail moves diagnostics out of the normal workflow and deep-
     <ApplicationsWorkspace
       initialSessions={[makeSession()]}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 

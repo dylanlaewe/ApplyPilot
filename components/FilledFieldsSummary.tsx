@@ -1,8 +1,17 @@
 import React from "react";
 
+import { WrongAnswerReporter } from "@/components/WrongAnswerReporter";
 import { DetectedField } from "@/types";
 
-export function FilledFieldsSummary({ fields }: { fields: DetectedField[] }) {
+export function FilledFieldsSummary({
+  fields,
+  disabled,
+  onReportWrongAnswer
+}: {
+  fields: DetectedField[];
+  disabled?: boolean;
+  onReportWrongAnswer?: (fieldId: string, correctedValue: string, note: string, learningApproved: boolean) => Promise<void>;
+}) {
   const filledFields = fields.filter((field) => field.status === "filled");
 
   if (!filledFields.length) {
@@ -23,6 +32,15 @@ export function FilledFieldsSummary({ fields }: { fields: DetectedField[] }) {
           <div key={field.id} className="rounded-[20px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-700">
             <p className="font-medium text-slate-900">{field.label}</p>
             <p className="mt-1">{field.suggestedValue}</p>
+            {onReportWrongAnswer ? (
+              <WrongAnswerReporter
+                currentValue={field.suggestedValue}
+                disabled={disabled}
+                onSubmit={({ correctedValue, note, learningApproved }) =>
+                  onReportWrongAnswer(field.id, correctedValue, note, learningApproved)
+                }
+              />
+            ) : null}
           </div>
         ))}
       </div>

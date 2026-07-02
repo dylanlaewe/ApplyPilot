@@ -10,6 +10,7 @@ import {
   ApplicationDisplayStatus,
   ApplicationNextStep,
   ApplicationSession,
+  DogfoodReport,
   SubmissionConfirmationState
 } from "@/types";
 
@@ -95,6 +96,7 @@ interface ApplicationsWorkspaceProps {
     filename: string;
     fileExists: boolean;
   };
+  initialDogfoodReport: DogfoodReport;
   initialView?: ApplicationsView;
   initialSelectedId?: string | null;
 }
@@ -102,6 +104,7 @@ interface ApplicationsWorkspaceProps {
 export function ApplicationsWorkspace({
   initialSessions,
   currentResume,
+  initialDogfoodReport,
   initialView = "applications",
   initialSelectedId = null
 }: ApplicationsWorkspaceProps) {
@@ -423,6 +426,94 @@ export function ApplicationsWorkspace({
                     <span className="text-sm font-semibold text-slate-950">{entry.count}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="rounded-[28px] bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm uppercase tracking-[0.18em] text-slate-500">Private alpha</p>
+                  <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight text-slate-950">Dogfood report</h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+                    A sanitized local summary of real ApplyPilot use. It excludes resumes, raw answers, contact details, demographics, cookies, and authentication data.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a href="/api/dogfood-report" className="secondary-button px-4 py-2 text-sm">
+                    Export JSON
+                  </a>
+                  <a href="/api/dogfood-report?format=markdown" className="secondary-button px-4 py-2 text-sm">
+                    Export Markdown
+                  </a>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-[22px] bg-slate-50 px-4 py-4">
+                  <p className="field-label">Prepared</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{initialDogfoodReport.applicationsPrepared}</p>
+                </div>
+                <div className="rounded-[22px] bg-slate-50 px-4 py-4">
+                  <p className="field-label">Median prep time</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                    {initialDogfoodReport.medianPreparationTimeSeconds
+                      ? formatPreparationDuration(initialDogfoodReport.medianPreparationTimeSeconds)
+                      : "Unknown"}
+                  </p>
+                </div>
+                <div className="rounded-[22px] bg-slate-50 px-4 py-4">
+                  <p className="field-label">Auto completion</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{initialDogfoodReport.averageAutomaticCompletionRate}%</p>
+                </div>
+                <div className="rounded-[22px] bg-slate-50 px-4 py-4">
+                  <p className="field-label">Severe corrections</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{initialDogfoodReport.severeCorrections}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[28px] bg-white p-6 shadow-sm">
+              <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-950">Answer quality</h2>
+              <div className="mt-5 space-y-3">
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Average user input</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.averageUserInputFields}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Average corrections</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.averageCorrections}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Retries</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.retryCount}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Short answers inserted</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.shortAnswersInserted}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Short answers edited</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.shortAnswersEdited}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[20px] bg-slate-50 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-700">Accepted unchanged</span>
+                  <span className="text-sm font-semibold text-slate-950">{initialDogfoodReport.shortAnswersAcceptedUnchanged}</span>
+                </div>
+              </div>
+              <div className="mt-5 rounded-[22px] bg-slate-50 px-4 py-4">
+                <p className="field-label">ATS mix</p>
+                <div className="mt-3 space-y-2">
+                  {initialDogfoodReport.applicationsByAts
+                    .filter((entry) => entry.count > 0)
+                    .map((entry) => (
+                      <div key={entry.atsProvider} className="flex items-center justify-between text-sm text-slate-700">
+                        <span>{entry.atsProvider}</span>
+                        <span className="font-semibold text-slate-950">{entry.count}</span>
+                      </div>
+                    ))}
+                </div>
               </div>
             </div>
           </div>
