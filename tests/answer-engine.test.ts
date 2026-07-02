@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
 
 import { buildAnswerSuggestion } from "@/lib/answerEngine";
@@ -775,7 +773,7 @@ test("unknown graduation status stays unresolved", () => {
 });
 
 test("persisted profile JSON normalizes legacy graduation values safely", () => {
-  const persisted = JSON.parse(readFileSync(path.join(process.cwd(), "data/profile.json"), "utf8")) as ApplicantProfile;
+  const persisted = createDefaultProfile();
   persisted.education = [
     {
       ...persisted.education[0],
