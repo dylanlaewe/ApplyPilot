@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 import { searchFieldsOfStudy } from "@/lib/fieldOfStudyCatalog";
 
 import { AutocompleteCombobox } from "@/components/AutocompleteCombobox";

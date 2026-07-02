@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircle, Trash2, UploadCloud } from "lucide-react";
+import React from "react";
 import { useRef, useState, useTransition } from "react";
 
 import { ApplicantProfile } from "@/types";

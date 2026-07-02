@@ -2,6 +2,7 @@
 
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
+import React from "react";
 import { useState, useTransition } from "react";
 
 import { SectionCard } from "@/components/SectionCard";

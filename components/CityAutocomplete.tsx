@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 import { searchCities } from "@/lib/locationCatalog";
 import { LocationPreference } from "@/types";
 

@@ -1,12 +1,12 @@
 "use client";
 
 import { Pencil, Plus, Save, Trash2 } from "lucide-react";
+import React from "react";
 import { useEffect, useState, useTransition } from "react";
 
+import { getAnswerReviewLabel, getAnswerReuseLabel } from "@/lib/answerBankExperience";
 import { answerAutofillBehaviorOptions } from "@/lib/profileSchema";
 import { AnswerBankItem } from "@/types";
-
-import { SectionCard } from "@/components/SectionCard";
 
 function createAnswerItem(): AnswerBankItem {
   const now = new Date().toISOString();
@@ -28,7 +28,7 @@ function createAnswerItem(): AnswerBankItem {
 }
 
 function normalizeDraft(item: AnswerBankItem): AnswerBankItem {
-  const question = item.canonicalQuestion || item.label;
+  const question = item.canonicalQuestion || item.label || "Untitled question";
   const behavior = item.autofillBehavior ?? (item.autoFillAllowed ? "autofill" : "suggest");
   return {
     ...item,
@@ -50,7 +50,11 @@ export function AnswerBankEditor({ initialItems }: { initialItems: AnswerBankIte
     setEditingId(initialItems[0]?.id ?? null);
   }, [initialItems]);
 
-  const saveItems = () => {
+  function updateItem(itemId: string, updates: Partial<AnswerBankItem>) {
+    setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...updates } : item)));
+  }
+
+  function saveItems() {
     startTransition(async () => {
       setMessage(null);
       const response = await fetch("/api/answer-bank", {
@@ -60,45 +64,79 @@ export function AnswerBankEditor({ initialItems }: { initialItems: AnswerBankIte
       });
       const payload = await response.json();
       if (!response.ok) {
-        setMessage(payload.error ?? "Could not save the answer bank.");
+        setMessage(payload.error ?? "Could not save your answers.");
         return;
       }
+
       setItems(payload.items);
-      setMessage("Answer bank saved locally.");
+      setMessage("Saved locally.");
     });
-  };
+  }
+
+  const editingItem = items.find((item) => item.id === editingId) ?? null;
 
   return (
     <div className="space-y-5">
-      <SectionCard
-        title="Reusable Answers"
-        description="Save the question, your best answer, and how much autonomy ApplyPilot should have when it sees that question again."
-      >
-        <div className="grid gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <div className="space-y-3">
-            {items.map((item) => {
-              const preview = item.answer.trim() ? `${item.answer.trim().slice(0, 96)}${item.answer.trim().length > 96 ? "..." : ""}` : "No saved answer yet.";
-              const behavior = item.autofillBehavior ?? (item.autoFillAllowed ? "autofill" : "suggest");
-              return (
-                <div
-                  key={item.id}
-                  className={`rounded-[24px] border p-4 transition ${editingId === item.id ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50/70 text-slate-900"}`}
-                >
-                  <p className="text-sm font-semibold">{item.canonicalQuestion || "Untitled question"}</p>
-                  <p className={`mt-2 text-sm leading-6 ${editingId === item.id ? "text-slate-200" : "text-slate-600"}`}>{preview}</p>
-                  <div className={`mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.14em] ${editingId === item.id ? "text-slate-300" : "text-slate-500"}`}>
-                    <span>{behavior}</span>
-                    <span>{item.sensitivity === "sensitive" ? "Sensitive" : "Normal"}</span>
-                    {item.lastUsedAt ? <span>Last used {new Date(item.lastUsedAt).toLocaleDateString()}</span> : null}
+      <section className="rounded-[32px] bg-white/92 p-5 shadow-sm ring-1 ring-slate-200/80">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-[0.18em] text-slate-500">Reusable answers</p>
+            <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight text-slate-950">Keep your written answers in plain language.</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+              Save the question, your preferred answer, and how much review you want before ApplyPilot suggests or reuses it.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                const next = createAnswerItem();
+                setItems((current) => [next, ...current]);
+                setEditingId(next.id);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add answer
+            </button>
+            <button type="button" className="primary-button" onClick={saveItems} disabled={isPending}>
+              <Save className="mr-2 h-4 w-4" />
+              {isPending ? "Saving..." : "Save answers"}
+            </button>
+          </div>
+        </div>
+        {message ? <p className="mt-4 text-sm text-slate-600">{message}</p> : null}
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="space-y-4">
+          {items.map((item) => {
+            const isEditing = editingId === item.id;
+            const answerPreview = item.answer.trim() ? item.answer.trim() : "No answer saved yet.";
+            return (
+              <article
+                key={item.id}
+                className={`rounded-[28px] p-5 ring-1 transition ${isEditing ? "bg-slate-950 text-white ring-slate-950" : "bg-white/92 text-slate-950 ring-slate-200/80"}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="max-w-3xl">
+                    <p className="text-sm uppercase tracking-[0.16em] text-slate-400">Question</p>
+                    <h3 className={`mt-2 font-display text-xl font-semibold tracking-tight ${isEditing ? "text-white" : "text-slate-950"}`}>
+                      {item.canonicalQuestion || "Untitled question"}
+                    </h3>
                   </div>
-                  <div className="mt-4 flex gap-2">
-                    <button type="button" className={editingId === item.id ? "secondary-button border-white/20 bg-white/10 text-white hover:bg-white/20" : "secondary-button"} onClick={() => setEditingId(item.id)}>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={isEditing ? "secondary-button border-white/20 bg-white/10 text-white hover:bg-white/20" : "secondary-button"}
+                      onClick={() => setEditingId(item.id)}
+                    >
                       <Pencil className="mr-2 h-4 w-4" />
                       Edit
                     </button>
                     <button
                       type="button"
-                      className={editingId === item.id ? "secondary-button border-white/20 bg-white/10 text-white hover:bg-white/20" : "secondary-button"}
+                      className={isEditing ? "secondary-button border-white/20 bg-white/10 text-white hover:bg-white/20" : "secondary-button"}
                       onClick={() => {
                         const next = items.filter((entry) => entry.id !== item.id);
                         setItems(next);
@@ -112,132 +150,109 @@ export function AnswerBankEditor({ initialItems }: { initialItems: AnswerBankIte
                     </button>
                   </div>
                 </div>
-              );
-            })}
 
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                const next = createAnswerItem();
-                setItems((current) => [next, ...current]);
-                setEditingId(next.id);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add answer
-            </button>
-          </div>
-
-          <div className="rounded-[26px] border border-slate-200 bg-white/95 p-5 shadow-sm">
-            {editingId ? (
-              (() => {
-                const item = items.find((entry) => entry.id === editingId);
-                if (!item) return null;
-
-                return (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="field-label">Question</label>
-                      <input
-                        className="field-input mt-2"
-                        value={item.canonicalQuestion}
-                        placeholder="Why are you interested in this position?"
-                        onChange={(event) =>
-                          setItems((current) =>
-                            current.map((entry) =>
-                              entry.id === item.id
-                                ? { ...entry, canonicalQuestion: event.target.value, label: event.target.value }
-                                : entry
-                            )
-                          )
-                        }
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label">Saved answer</label>
-                      <textarea
-                        className="subtle-textarea mt-2"
-                        value={item.answer}
-                        onChange={(event) =>
-                          setItems((current) =>
-                            current.map((entry) => (entry.id === item.id ? { ...entry, answer: event.target.value } : entry))
-                          )
-                        }
-                      />
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div>
-                        <label className="field-label">Autofill behavior</label>
-                        <select
-                          className="field-input mt-2"
-                          value={item.autofillBehavior ?? (item.autoFillAllowed ? "autofill" : "suggest")}
-                          onChange={(event) =>
-                            setItems((current) =>
-                              current.map((entry) =>
-                                entry.id === item.id
-                                  ? {
-                                      ...entry,
-                                      autofillBehavior: event.target.value as AnswerBankItem["autofillBehavior"],
-                                      autoFillAllowed: event.target.value === "autofill"
-                                    }
-                                  : entry
-                              )
-                            )
-                          }
-                        >
-                          {answerAutofillBehaviorOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="field-label">Sensitivity</label>
-                        <select
-                          className="field-input mt-2"
-                          value={item.sensitivity === "sensitive" ? "sensitive" : "review"}
-                          onChange={(event) =>
-                            setItems((current) =>
-                              current.map((entry) =>
-                                entry.id === item.id
-                                  ? {
-                                      ...entry,
-                                      sensitivity: event.target.value === "sensitive" ? "sensitive" : "review"
-                                    }
-                                  : entry
-                              )
-                            )
-                          }
-                        >
-                          <option value="review">Normal</option>
-                          <option value="sensitive">Sensitive</option>
-                        </select>
-                      </div>
-                    </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <div className={`rounded-[22px] p-4 ${isEditing ? "bg-white/8" : "bg-slate-50/80"}`}>
+                    <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${isEditing ? "text-slate-300" : "text-slate-500"}`}>Answer</p>
+                    <p className={`mt-3 text-sm leading-6 ${isEditing ? "text-slate-100" : "text-slate-700"}`}>{answerPreview}</p>
                   </div>
-                );
-              })()
-            ) : (
-              <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-600">
-                Select an answer to edit, or add a new one.
-              </div>
-            )}
-          </div>
+                  <div className={`rounded-[22px] p-4 ${isEditing ? "bg-white/8" : "bg-slate-50/80"}`}>
+                    <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${isEditing ? "text-slate-300" : "text-slate-500"}`}>Where it may be reused</p>
+                    <p className={`mt-3 text-sm leading-6 ${isEditing ? "text-slate-100" : "text-slate-700"}`}>{getAnswerReuseLabel(item)}</p>
+                  </div>
+                  <div className={`rounded-[22px] p-4 ${isEditing ? "bg-white/8" : "bg-slate-50/80"}`}>
+                    <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${isEditing ? "text-slate-300" : "text-slate-500"}`}>Review preference</p>
+                    <p className={`mt-3 text-sm leading-6 ${isEditing ? "text-slate-100" : "text-slate-700"}`}>{getAnswerReviewLabel(item)}</p>
+                    {item.lastUsedAt ? (
+                      <p className={`mt-3 text-xs uppercase tracking-[0.14em] ${isEditing ? "text-slate-300" : "text-slate-500"}`}>
+                        Last reused {new Date(item.lastUsedAt).toLocaleDateString()}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button type="button" className="primary-button" onClick={saveItems} disabled={isPending}>
-            <Save className="mr-2 h-4 w-4" />
-            {isPending ? "Saving..." : "Save answer bank"}
-          </button>
-          {message ? <p className="text-sm text-slate-600">{message}</p> : null}
-        </div>
-      </SectionCard>
+        <aside className="rounded-[28px] bg-white/92 p-5 shadow-sm ring-1 ring-slate-200/80">
+          {editingItem ? (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm uppercase tracking-[0.18em] text-slate-500">Edit answer</p>
+                <h3 className="mt-2 font-display text-2xl font-semibold tracking-tight text-slate-950">Keep the wording clear and reviewable.</h3>
+              </div>
+
+              <div>
+                <label className="field-label">Question</label>
+                <input
+                  className="field-input mt-2"
+                  value={editingItem.canonicalQuestion}
+                  placeholder="Why are you interested in this role?"
+                  onChange={(event) => updateItem(editingItem.id, { canonicalQuestion: event.target.value, label: event.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="field-label">Answer</label>
+                <textarea
+                  className="field-input mt-2 min-h-[180px]"
+                  value={editingItem.answer}
+                  placeholder="Write the answer you would want to review and reuse later."
+                  onChange={(event) => updateItem(editingItem.id, { answer: event.target.value })}
+                />
+              </div>
+
+              <div className="rounded-[24px] bg-slate-50/80 p-4 ring-1 ring-slate-200">
+                <p className="field-label">Where it may be reused</p>
+                <p className="mt-3 text-sm leading-6 text-slate-700">{getAnswerReuseLabel(editingItem)}</p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="field-label">Reuse setting</label>
+                  <select
+                    className="field-input mt-2"
+                    value={editingItem.autofillBehavior ?? (editingItem.autoFillAllowed ? "autofill" : "suggest")}
+                    onChange={(event) =>
+                      updateItem(editingItem.id, {
+                        autofillBehavior: event.target.value as AnswerBankItem["autofillBehavior"],
+                        autoFillAllowed: event.target.value === "autofill"
+                      })
+                    }
+                  >
+                    {answerAutofillBehaviorOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="field-label">Sensitivity</label>
+                  <select
+                    className="field-input mt-2"
+                    value={editingItem.sensitivity === "sensitive" ? "sensitive" : "review"}
+                    onChange={(event) =>
+                      updateItem(editingItem.id, {
+                        sensitivity: event.target.value === "sensitive" ? "sensitive" : "review"
+                      })
+                    }
+                  >
+                    <option value="review">Standard answer</option>
+                    <option value="sensitive">Sensitive answer</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[24px] bg-slate-50/80 p-6 text-sm leading-6 text-slate-600 ring-1 ring-slate-200">
+              Select an answer to edit, or add a new one.
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

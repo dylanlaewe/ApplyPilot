@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import React from "react";
 import { useEffect, useState } from "react";
 
 import { ApplicationSessionPanel } from "@/components/ApplicationSessionPanel";
