@@ -1,9 +1,12 @@
 "use client";
 
-import { LoaderCircle, Plus, Save, Trash2, Upload, X } from "lucide-react";
-import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
+import { Check, ChevronDown, ChevronUp, LoaderCircle, PencilLine, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import React from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
+  additionalQuestionLabels,
   availabilityTimingOptions,
   binaryChoiceOptions,
   clearanceStatusOptions,
@@ -13,7 +16,6 @@ import {
   eeocGenderOptions,
   eeocRaceOptions,
   eeocVeteranOptions,
-  graduationDateTypeOptions,
   graduationStatusOptions,
   jobTypeOptions,
   securityClearanceLevelOptions,
@@ -21,14 +23,29 @@ import {
   workAuthorizationCategoryOptions,
   yesNoNotApplicableOptions
 } from "@/lib/profileSchema";
+import {
+  getResumeFilename,
+  getSaveStateLabel,
+  getSaveStateTone,
+  getStoryPreview,
+  prepareProfileForSave,
+  profileNeedsResume,
+  type ProfileLinkField,
+  summarizeEducation,
+  summarizeExperience,
+  summarizeStory,
+  type SaveState,
+  validateProfileLinks
+} from "@/lib/profileExperience";
 import { formatDateTime } from "@/lib/utils";
-import { ApplicantProfile, BehavioralStory, EducationEntry, ExperienceEntry } from "@/types";
+import { ApplicantProfile, BehavioralStory, EducationEntry, ExperienceEntry, JobType } from "@/types";
+import { cn } from "@/lib/utils";
 
 import { CityAutocomplete } from "@/components/CityAutocomplete";
 import { FieldOfStudyAutocomplete } from "@/components/FieldOfStudyAutocomplete";
 import { LocationPreferenceSelector } from "@/components/LocationPreferenceSelector";
+import { MultiSelectAutocomplete } from "@/components/MultiSelectAutocomplete";
 import { SchoolAutocomplete } from "@/components/SchoolAutocomplete";
-import { SectionCard } from "@/components/SectionCard";
 import { SkillSelector } from "@/components/SkillSelector";
 import { US_STATE_OPTIONS } from "@/lib/locationCatalog";
 
@@ -71,28 +88,7 @@ function createExperienceEntry(): ExperienceEntry {
   };
 }
 
-const eeocSingleSections: Array<{
-  key: "gender" | "veteranStatus" | "disabilityStatus";
-  label: string;
-  options: readonly string[];
-}> = [
-  { key: "gender", label: "Gender", options: eeocGenderOptions },
-  { key: "veteranStatus", label: "Veteran status", options: eeocVeteranOptions },
-  { key: "disabilityStatus", label: "Disability status", options: eeocDisabilityOptions }
-];
-
-function normalizeCommaSeparatedList(value: string) {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function updateListValue(values: string[], index: number, nextValue: string) {
-  return values.map((value, valueIndex) => (valueIndex === index ? nextValue : value));
-}
-
-function createEmptyStory(): BehavioralStory {
+function createStory(): BehavioralStory {
   return {
     id: crypto.randomUUID(),
     title: "",
@@ -103,53 +99,98 @@ function createEmptyStory(): BehavioralStory {
   };
 }
 
-function ListEditor({
-  label,
+function DisclosureSection({
+  title,
   description,
-  values,
+  summary,
+  optional,
+  open,
+  onToggle,
+  children
+}: {
+  title: string;
+  description: string;
+  summary?: string;
+  optional?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const regionId = useId();
+
+  return (
+    <section className="rounded-[30px] bg-white/92 p-5 shadow-sm ring-1 ring-slate-200/80">
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-4 text-left"
+        aria-expanded={open}
+        aria-controls={regionId}
+        onClick={onToggle}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-[1.35rem] font-semibold tracking-tight text-slate-950">{title}</h2>
+            {optional ? (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Optional
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
+          {summary ? <p className="mt-2 text-sm font-medium text-slate-500">{summary}</p> : null}
+        </div>
+        <span className="mt-1 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+      </button>
+      <div id={regionId} className={cn("overflow-hidden transition-all", open ? "mt-5" : "mt-0 hidden")}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function ManualChipEditor({
+  label,
+  helper,
   placeholder,
-  addLabel,
+  values,
   onChange
 }: {
   label: string;
-  description?: string;
-  values: string[];
+  helper?: string;
   placeholder: string;
-  addLabel: string;
+  values: string[];
   onChange: (next: string[]) => void;
 }) {
-  const safeValues = values.length ? values : [""];
+  const selected = useMemo(
+    () =>
+      values.map((value) => ({
+        id: value.toLowerCase().replace(/[^\w]+/g, "-"),
+        label: value
+      })),
+    [values]
+  );
 
   return (
-    <div className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{label}</p>
-          {description ? <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p> : null}
-        </div>
-        <button type="button" className="secondary-button px-3 py-2 text-xs" onClick={() => onChange([...safeValues, ""])}>
-          <Plus className="mr-2 h-3.5 w-3.5" />
-          {addLabel}
-        </button>
-      </div>
-      <div className="mt-4 space-y-3">
-        {safeValues.map((value, index) => (
-          <div key={`${label}-${index}`} className="flex items-start gap-3">
-            <textarea
-              className="field-input min-h-[84px] flex-1"
-              value={value}
-              placeholder={placeholder}
-              onChange={(event) => onChange(updateListValue(safeValues, index, event.target.value))}
-            />
-            <button
-              type="button"
-              className="secondary-button px-3 py-2"
-              onClick={() => onChange(safeValues.length === 1 ? [""] : safeValues.filter((_, valueIndex) => valueIndex !== index))}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
+    <div>
+      <label className="field-label">{label}</label>
+      {helper ? <p className="mt-2 text-sm text-slate-500">{helper}</p> : null}
+      <div className="mt-3">
+        <MultiSelectAutocomplete
+          options={[]}
+          selected={selected}
+          placeholder={placeholder}
+          emptyMessage="Press Enter to add this item."
+          createLabel={(value) => `Add "${value}"`}
+          onAdd={() => undefined}
+          onCreate={(value) => {
+            const trimmed = value.trim();
+            if (!trimmed || values.some((entry) => entry.toLowerCase() === trimmed.toLowerCase())) return;
+            onChange([...values, trimmed]);
+          }}
+          onRemove={(optionId) => onChange(values.filter((value) => value.toLowerCase().replace(/[^\w]+/g, "-") !== optionId))}
+        />
       </div>
     </div>
   );
@@ -157,51 +198,163 @@ function ListEditor({
 
 export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfile }) {
   const [profile, setProfile] = useState(initialProfile);
-  const [message, setMessage] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [openSections, setOpenSections] = useState({
+    personal: true,
+    contact: true,
+    authorization: true,
+    experience: true,
+    education: true,
+    skills: true,
+    preferences: false,
+    background: false,
+    stories: false,
+    optional: false
+  });
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [editingExperienceId, setEditingExperienceId] = useState<string | null>(initialProfile.experience[0]?.id ?? null);
+  const [editingEducationId, setEditingEducationId] = useState<string | null>(initialProfile.education[0]?.id ?? null);
+  const [editingStoryId, setEditingStoryId] = useState<string | null>(initialProfile.stories[0]?.id ?? null);
   const resumeInputRef = useRef<HTMLInputElement | null>(null);
+  const lastSavedRef = useRef(JSON.stringify(prepareProfileForSave(initialProfile)));
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveRequestRef = useRef(0);
 
   useEffect(() => {
+    const prepared = prepareProfileForSave(initialProfile);
     setProfile(initialProfile);
+    lastSavedRef.current = JSON.stringify(prepared);
+    setSaveState("saved");
+    setSaveError(null);
+    setResumeError(null);
+    setEditingExperienceId(initialProfile.experience[0]?.id ?? null);
+    setEditingEducationId(initialProfile.education[0]?.id ?? null);
+    setEditingStoryId(initialProfile.stories[0]?.id ?? null);
   }, [initialProfile]);
 
-  const saveProfile = () => {
-    startTransition(async () => {
-      setMessage(null);
-      const response = await fetch("/api/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...profile,
-          identity: {
-            ...profile.identity,
-            fullName:
-              profile.identity.fullName.trim() ||
-              [profile.identity.firstName, profile.identity.middleName, profile.identity.lastName].filter(Boolean).join(" ").trim(),
-            phone: [profile.identity.phoneCountryCode, profile.identity.phoneNationalNumber].filter(Boolean).join(" ").trim()
-          }
-        })
-      });
+  const preparedProfile = useMemo(() => prepareProfileForSave(profile), [profile]);
+  const serializedProfile = useMemo(() => JSON.stringify(preparedProfile), [preparedProfile]);
+  const linkErrors = useMemo(() => validateProfileLinks(preparedProfile), [preparedProfile]);
+  const hasLinkErrors = Object.values(linkErrors).some(Boolean);
+  const hasUnsavedChanges = serializedProfile !== lastSavedRef.current;
+  const resumeName = getResumeFilename(profile);
 
-      const payload = await response.json();
-      if (!response.ok) {
-        setMessage(payload.error ?? "Could not save profile.");
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setSaveState("saved");
+      return;
+    }
+
+    setSaveState((current) => (current === "error" ? current : "pending"));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+    saveTimerRef.current = setTimeout(async () => {
+      if (hasLinkErrors) {
+        setSaveState("error");
+        setSaveError("Check the highlighted links before ApplyPilot can save this profile.");
         return;
       }
 
-      setProfile(payload.profile);
-      setMessage("Profile saved locally.");
-    });
-  };
+      const requestId = ++saveRequestRef.current;
+      setSaveState("saving");
+      setSaveError(null);
 
-  const uploadResume = async (file: File) => {
+      try {
+        const response = await fetch("/api/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: serializedProfile
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Could not save profile.");
+        }
+
+        if (requestId !== saveRequestRef.current) return;
+
+        const normalized = prepareProfileForSave(payload.profile);
+        lastSavedRef.current = JSON.stringify(normalized);
+        setProfile(payload.profile);
+        setSaveState("saved");
+        setSaveError(null);
+      } catch (error) {
+        if (requestId !== saveRequestRef.current) return;
+        setSaveState("error");
+        setSaveError(error instanceof Error ? error.message : "Could not save profile.");
+      }
+    }, 800);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [hasLinkErrors, hasUnsavedChanges, serializedProfile]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  function setSectionOpen(section: keyof typeof openSections) {
+    setOpenSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+
+  function setIdentityField<K extends keyof ApplicantProfile["identity"]>(key: K, value: ApplicantProfile["identity"][K]) {
+    setProfile((current) => ({
+      ...current,
+      identity: {
+        ...current.identity,
+        [key]: value
+      }
+    }));
+  }
+
+  async function saveNow() {
+    if (!hasUnsavedChanges) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaveState("saving");
+    setSaveError(null);
+
+    if (hasLinkErrors) {
+      setSaveState("error");
+      setSaveError("Check the highlighted links before ApplyPilot can save this profile.");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: serializedProfile
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not save profile.");
+      }
+
+      const normalized = prepareProfileForSave(payload.profile);
+      lastSavedRef.current = JSON.stringify(normalized);
+      setProfile(payload.profile);
+      setSaveState("saved");
+    } catch (error) {
+      setSaveState("error");
+      setSaveError(error instanceof Error ? error.message : "Could not save profile.");
+    }
+  }
+
+  async function uploadResume(file: File) {
     setResumeBusy(true);
-    setMessage(null);
+    setResumeError(null);
     try {
       const formData = new FormData();
       formData.append("resume", file);
-
       const response = await fetch("/api/profile/resume", {
         method: "POST",
         body: formData
@@ -211,18 +364,23 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
         throw new Error(payload.error ?? "Could not upload resume.");
       }
 
+      const normalized = prepareProfileForSave(payload.profile);
+      lastSavedRef.current = JSON.stringify(normalized);
       setProfile(payload.profile);
-      setMessage("Resume saved locally.");
+      setSaveState("saved");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not upload resume.");
+      setResumeError(error instanceof Error ? error.message : "Could not upload resume.");
     } finally {
       setResumeBusy(false);
     }
-  };
+  }
 
-  const removeResume = async () => {
+  async function removeResume() {
+    if (!resumeName) return;
+    if (!window.confirm("Remove the saved resume from ApplyPilot's local storage?")) return;
+
     setResumeBusy(true);
-    setMessage(null);
+    setResumeError(null);
     try {
       const response = await fetch("/api/profile/resume", { method: "DELETE" });
       const payload = await response.json();
@@ -230,20 +388,103 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
         throw new Error(payload.error ?? "Could not remove resume.");
       }
 
+      const normalized = prepareProfileForSave(payload.profile);
+      lastSavedRef.current = JSON.stringify(normalized);
       setProfile(payload.profile);
-      setMessage("Resume removed.");
+      setSaveState("saved");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not remove resume.");
+      setResumeError(error instanceof Error ? error.message : "Could not remove resume.");
     } finally {
       setResumeBusy(false);
     }
-  };
+  }
 
+  const additionalQuestionEntries = Object.entries(additionalQuestionLabels) as Array<
+    [keyof ApplicantProfile["additionalApplicationFacts"], string]
+  >;
   const isUnitedStates = profile.identity.country === "United States";
 
   return (
     <div className="space-y-5 pb-24">
-      <SectionCard title="Contact Information" description="Save clean identity, phone, and address facts once so ApplyPilot can adapt them safely across different forms.">
+      <section className="overflow-hidden rounded-[34px] bg-slate-950 text-white shadow-xl">
+        <div className="grid gap-6 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:px-8">
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm uppercase tracking-[0.22em] text-slate-300">Local Profile</p>
+              <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight">Set up your application profile once, then keep it honest and easy to review.</h2>
+            </div>
+            <p className="max-w-3xl text-sm leading-6 text-slate-300">
+              ApplyPilot stores this information locally on this device. It does not claim encryption here, and it will not use optional demographic answers unless a form explicitly asks for them.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={cn("inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium", getSaveStateTone(saveState))}>
+                {saveState === "saved" ? <Check className="mr-2 h-4 w-4" /> : saveState === "saving" ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {getSaveStateLabel(saveState)}
+              </span>
+              {saveError ? <p className="text-sm text-rose-300">{saveError}</p> : <p className="text-sm text-slate-300">Autosave keeps quiet unless something needs your attention.</p>}
+            </div>
+          </div>
+
+          <div className="rounded-[28px] bg-white/10 p-5 backdrop-blur">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm uppercase tracking-[0.16em] text-slate-300">Resume</p>
+                <p className="mt-3 text-xl font-semibold">{resumeName || "No resume selected yet"}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  {resumeName
+                    ? `Last updated ${profile.resume.uploadedAt ? formatDateTime(profile.resume.uploadedAt) : "recently"}.`
+                    : "Upload a PDF or DOCX so ApplyPilot can attach it when a visible resume field appears."}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]",
+                  profileNeedsResume(profile) ? "bg-amber-200 text-amber-950" : "bg-emerald-200 text-emerald-950"
+                )}
+              >
+                {profileNeedsResume(profile) ? "Needed" : "Ready"}
+              </span>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" className="primary-button" disabled={resumeBusy} onClick={() => resumeInputRef.current?.click()}>
+                {resumeBusy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                {resumeName ? "Replace resume" : "Upload resume"}
+              </button>
+              <button type="button" className="secondary-button" disabled={!resumeName || resumeBusy} onClick={removeResume}>
+                <X className="mr-2 h-4 w-4" />
+                Remove
+              </button>
+              <button type="button" className="secondary-button" disabled={!hasUnsavedChanges || saveState === "saving"} onClick={saveNow}>
+                <Save className="mr-2 h-4 w-4" />
+                Save now
+              </button>
+            </div>
+            <input
+              ref={resumeInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.docx"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  void uploadResume(file);
+                  event.currentTarget.value = "";
+                }
+              }}
+            />
+            {resumeError ? <p className="mt-4 text-sm text-rose-300">{resumeError}</p> : null}
+            <p className="mt-4 text-xs uppercase tracking-[0.14em] text-slate-400">The resume file stays local and is ignored by Git.</p>
+          </div>
+        </div>
+      </section>
+
+      <DisclosureSection
+        title="Personal information"
+        description="Start with the details that appear on almost every application."
+        summary="Name, preferred name, and your main email and phone."
+        open={openSections.personal}
+        onToggle={() => setSectionOpen("personal")}
+      >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[
             ["firstName", "First name"],
@@ -251,10 +492,31 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
             ["lastName", "Last name"],
             ["preferredName", "Preferred name"],
             ["email", "Email"],
-            ["phoneCountry", "Phone country"],
             ["phoneCountryCode", "Calling code"],
-            ["phoneNationalNumber", "National number"],
-            ["phoneExtension", "Extension"],
+            ["phoneNationalNumber", "Phone number"],
+            ["phoneExtension", "Extension"]
+          ].map(([key, label]) => (
+            <div key={key}>
+              <label className="field-label">{label}</label>
+              <input
+                className="field-input mt-2"
+                value={String(profile.identity[key as keyof ApplicantProfile["identity"]] ?? "")}
+                onChange={(event) => setIdentityField(key as keyof ApplicantProfile["identity"], event.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Contact and address"
+        description="Keep address details close at hand, but only store the ones you want reused."
+        summary="Street address stays editable here, and city/state stay easy to review."
+        open={openSections.contact}
+        onToggle={() => setSectionOpen("contact")}
+      >
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[
             ["addressLine1", "Address line 1"],
             ["addressLine2", "Address line 2"],
             ["postalCode", "ZIP / postal code"],
@@ -265,20 +527,12 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               <input
                 className="field-input mt-2"
                 value={String(profile.identity[key as keyof ApplicantProfile["identity"]] ?? "")}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    identity: {
-                      ...current.identity,
-                      [key]: event.target.value
-                    }
-                  }))
-                }
+                onChange={(event) => setIdentityField(key as keyof ApplicantProfile["identity"], event.target.value)}
               />
             </div>
           ))}
 
-          <div className="md:col-span-2 xl:col-span-2">
+          <div className="md:col-span-2">
             <label className="field-label">City</label>
             <div className="mt-2">
               <CityAutocomplete
@@ -317,19 +571,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
           <div>
             <label className="field-label">State / province</label>
             {isUnitedStates ? (
-              <select
-                className="field-input mt-2"
-                value={profile.identity.stateProvince}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    identity: {
-                      ...current.identity,
-                      stateProvince: event.target.value
-                    }
-                  }))
-                }
-              >
+              <select className="field-input mt-2" value={profile.identity.stateProvince} onChange={(event) => setIdentityField("stateProvince", event.target.value)}>
                 <option value="">Select a state</option>
                 {US_STATE_OPTIONS.map((state) => (
                   <option key={state.code} value={state.code}>
@@ -338,107 +580,19 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
                 ))}
               </select>
             ) : (
-              <input
-                className="field-input mt-2"
-                value={profile.identity.stateProvince}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    identity: {
-                      ...current.identity,
-                      stateProvince: event.target.value
-                    }
-                  }))
-                }
-              />
+              <input className="field-input mt-2" value={profile.identity.stateProvince} onChange={(event) => setIdentityField("stateProvince", event.target.value)} />
             )}
           </div>
         </div>
-      </SectionCard>
+      </DisclosureSection>
 
-      <SectionCard title="Professional Links" description="Store the exact links ApplyPilot should reuse, plus one generic website fallback preference for ambiguous Website fields.">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            ["linkedin", "LinkedIn"],
-            ["portfolio", "Portfolio"],
-            ["website", "Personal website"],
-            ["github", "GitHub"],
-            ["otherLink", "Other professional link"]
-          ].map(([key, label]) => (
-            <div key={key}>
-              <label className="field-label">{label}</label>
-              <input
-                className="field-input mt-2"
-                value={String(profile.identity[key as keyof ApplicantProfile["identity"]] ?? "")}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    identity: {
-                      ...current.identity,
-                      [key]: event.target.value
-                    }
-                  }))
-                }
-              />
-            </div>
-          ))}
-          <div>
-            <label className="field-label">Generic Website fallback</label>
-            <select
-              className="field-input mt-2"
-              value={profile.identity.genericWebsiteFallback}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  identity: {
-                    ...current.identity,
-                    genericWebsiteFallback: event.target.value as ApplicantProfile["identity"]["genericWebsiteFallback"]
-                  }
-                }))
-              }
-            >
-              {websiteFallbackOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Resume" description="Your resume is stored locally and reused only when an application asks for a file upload.">
-        <div className="rounded-[22px] border border-slate-200 bg-slate-50/70 px-4 py-4">
-          <p className="text-base font-medium text-slate-950">{profile.resume.originalFilename || "No resume uploaded yet"}</p>
-          <p className="mt-1 text-sm text-slate-500">
-            {profile.resume.uploadedAt
-              ? `Uploaded ${formatDateTime(profile.resume.uploadedAt)}`
-              : "Upload a PDF or DOCX resume once, and ApplyPilot will reuse it when a visible file input matches."}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button type="button" className="secondary-button" disabled={resumeBusy} onClick={() => resumeInputRef.current?.click()}>
-              {resumeBusy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Replace Resume
-            </button>
-            <button type="button" className="secondary-button" disabled={resumeBusy || !profile.resume.originalFilename} onClick={removeResume}>
-              <X className="mr-2 h-4 w-4" />
-              Remove
-            </button>
-          </div>
-          <input
-            ref={resumeInputRef}
-            type="file"
-            className="hidden"
-            accept=".pdf,.docx"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) uploadResume(file);
-            }}
-          />
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Work Authorization" description="Keep authorization, status category, and sponsorship answers separate so ApplyPilot can answer the right question instead of flattening everything into one yes/no.">
+      <DisclosureSection
+        title="Work authorization"
+        description="Keep legally sensitive employment authorization answers explicit, separate, and easy to review."
+        summary="These answers are reused only from what you save here."
+        open={openSections.authorization}
+        onToggle={() => setSectionOpen("authorization")}
+      >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <div>
             <label className="field-label">Authorized to work in the United States</label>
@@ -462,8 +616,9 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               ))}
             </select>
           </div>
+
           <div>
-            <label className="field-label">Current work authorization category</label>
+            <label className="field-label">Current authorization category</label>
             <select
               className="field-input mt-2"
               value={profile.workAuthorizationProfile.usWorkAuthorizationCategory}
@@ -484,6 +639,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               ))}
             </select>
           </div>
+
           <div>
             <label className="field-label">Require sponsorship now</label>
             <select
@@ -506,6 +662,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               ))}
             </select>
           </div>
+
           <div>
             <label className="field-label">Require sponsorship in the future</label>
             <select
@@ -528,6 +685,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               ))}
             </select>
           </div>
+
           <div>
             <label className="field-label">Visa type</label>
             <input
@@ -544,6 +702,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               }
             />
           </div>
+
           <div>
             <label className="field-label">Authorization expiration date</label>
             <input
@@ -562,579 +721,693 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
             />
           </div>
         </div>
+      </DisclosureSection>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {[
-            ["openToRelocation", "Open to relocation"],
-            ["openToRemote", "Open to remote work"],
-            ["openToHybrid", "Open to hybrid work"],
-            ["openToOnsite", "Open to onsite work"]
-          ].map(([key, label]) => (
-            <div key={key}>
-              <label className="field-label">{label}</label>
+      <DisclosureSection
+        title="Employment"
+        description="Keep work history tight and factual. Each entry is easy to expand, update, or skip."
+        summary={profile.experience.some((entry) => entry.company || entry.title) ? `${profile.experience.length} saved role${profile.experience.length === 1 ? "" : "s"}` : "No roles saved yet."}
+        open={openSections.experience}
+        onToggle={() => setSectionOpen("experience")}
+      >
+        <label className="mb-5 flex items-center gap-3 rounded-[24px] bg-slate-50/80 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
+          <input
+            type="checkbox"
+            checked={profile.workHistoryComplete}
+            onChange={(event) => setProfile((current) => ({ ...current, workHistoryComplete: event.target.checked }))}
+          />
+          My saved work history is complete enough for employer-history questions.
+        </label>
+
+        <div className="space-y-4">
+          {profile.experience.map((entry, index) => {
+            const isEditing = editingExperienceId === entry.id;
+            return (
+              <div key={entry.id} className="rounded-[26px] bg-slate-50/70 p-4 ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{summarizeExperience(entry)}</p>
+                    <p className="mt-1 text-sm text-slate-500">{entry.currentRole ? "Current role" : "Past role"}{entry.startDate ? ` • ${entry.startDate}` : ""}{entry.endDate ? ` to ${entry.endDate}` : ""}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="secondary-button px-3 py-2" onClick={() => setEditingExperienceId(isEditing ? null : entry.id)}>
+                      <PencilLine className="mr-2 h-4 w-4" />
+                      {isEditing ? "Collapse" : "Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button px-3 py-2"
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${entry.title || `employment entry ${index + 1}`}?`)) return;
+                        setProfile((current) => ({
+                          ...current,
+                          experience: current.experience.length === 1 ? [createExperienceEntry()] : current.experience.filter((item) => item.id !== entry.id)
+                        }));
+                        if (editingExperienceId === entry.id) {
+                          setEditingExperienceId(null);
+                        }
+                      }}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {[
+                      ["company", "Employer"],
+                      ["title", "Role title"],
+                      ["location", "Location"]
+                    ].map(([key, label]) => (
+                      <div key={key}>
+                        <label className="field-label">{label}</label>
+                        <input
+                          className="field-input mt-2"
+                          value={String(entry[key as keyof ExperienceEntry] ?? "")}
+                          onChange={(event) =>
+                            setProfile((current) => ({
+                              ...current,
+                              experience: current.experience.map((item) => (item.id === entry.id ? { ...item, [key]: event.target.value } : item))
+                            }))
+                          }
+                        />
+                      </div>
+                    ))}
+
+                    <div>
+                      <label className="field-label">Start month</label>
+                      <input
+                        type="month"
+                        className="field-input mt-2"
+                        value={entry.startDate}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            experience: current.experience.map((item) => (item.id === entry.id ? { ...item, startDate: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label">End month</label>
+                      <input
+                        type="month"
+                        className="field-input mt-2"
+                        value={entry.endDate}
+                        disabled={entry.currentRole}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            experience: current.experience.map((item) => (item.id === entry.id ? { ...item, endDate: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-3 rounded-[20px] bg-white px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={entry.currentRole}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            experience: current.experience.map((item) =>
+                              item.id === entry.id ? { ...item, currentRole: event.target.checked, endDate: event.target.checked ? "" : item.endDate } : item
+                            )
+                          }))
+                        }
+                      />
+                      This is my current role
+                    </label>
+
+                    <div className="md:col-span-2 xl:col-span-3">
+                      <label className="field-label">Company aliases</label>
+                      <input
+                        className="field-input mt-2"
+                        placeholder="Optional names a form might use for this company"
+                        value={entry.aliases.join(", ")}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            experience: current.experience.map((item) =>
+                              item.id === entry.id
+                                ? {
+                                    ...item,
+                                    aliases: event.target.value
+                                      .split(",")
+                                      .map((alias) => alias.trim())
+                                      .filter(Boolean)
+                                  }
+                                : item
+                            )
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="md:col-span-2 xl:col-span-3">
+                      <label className="field-label">Role summary</label>
+                      <textarea
+                        className="field-input mt-2 min-h-[110px]"
+                        placeholder="One concise description you would be comfortable reusing."
+                        value={entry.summary}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            experience: current.experience.map((item) => (item.id === entry.id ? { ...item, summary: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              const next = createExperienceEntry();
+              setProfile((current) => ({ ...current, experience: [...current.experience, next] }));
+              setEditingExperienceId(next.id);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add employment entry
+          </button>
+        </div>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Education"
+        description="Save only the education details you want reused on application forms."
+        summary={profile.education.some((entry) => entry.school || entry.degree) ? `${profile.education.length} saved education entr${profile.education.length === 1 ? "y" : "ies"}` : "No education saved yet."}
+        open={openSections.education}
+        onToggle={() => setSectionOpen("education")}
+      >
+        <div className="space-y-4">
+          {profile.education.map((entry, index) => {
+            const isEditing = editingEducationId === entry.id;
+            return (
+              <div key={entry.id} className="rounded-[26px] bg-slate-50/70 p-4 ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{summarizeEducation(entry)}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {entry.graduationStatus === "expected" || entry.graduationStatus === "currently_enrolled" ? "Expected / in progress" : "Education entry"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="secondary-button px-3 py-2" onClick={() => setEditingEducationId(isEditing ? null : entry.id)}>
+                      <PencilLine className="mr-2 h-4 w-4" />
+                      {isEditing ? "Collapse" : "Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button px-3 py-2"
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${entry.school || `education entry ${index + 1}`}?`)) return;
+                        setProfile((current) => ({
+                          ...current,
+                          education: current.education.length === 1 ? [createEducationEntry()] : current.education.filter((item) => item.id !== entry.id)
+                        }));
+                        if (editingEducationId === entry.id) {
+                          setEditingEducationId(null);
+                        }
+                      }}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="md:col-span-2">
+                      <label className="field-label">School</label>
+                      <div className="mt-2">
+                        <SchoolAutocomplete
+                          value={entry.school}
+                          onSelect={(next) =>
+                            setProfile((current) => ({
+                              ...current,
+                              education: current.education.map((item) =>
+                                item.id === entry.id ? { ...item, school: next.school, normalizedSchoolName: next.normalizedSchoolName } : item
+                              )
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="field-label">Degree type</label>
+                      <select
+                        className="field-input mt-2"
+                        value={entry.degreeType}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) =>
+                              item.id === entry.id
+                                ? {
+                                    ...item,
+                                    degreeType: event.target.value as EducationEntry["degreeType"],
+                                    degree: event.target.selectedOptions[0]?.textContent ?? "",
+                                    degreeLevel: degreeTypeOptions.find((option) => option.value === event.target.value)?.degreeLevel ?? ""
+                                  }
+                                : item
+                            )
+                          }))
+                        }
+                      >
+                        <option value="">Select a degree</option>
+                        {degreeTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {entry.degreeType === "other" ? (
+                      <div>
+                        <label className="field-label">Custom degree</label>
+                        <input
+                          className="field-input mt-2"
+                          value={entry.degreeCustomValue}
+                          onChange={(event) =>
+                            setProfile((current) => ({
+                              ...current,
+                              education: current.education.map((item) =>
+                                item.id === entry.id ? { ...item, degreeCustomValue: event.target.value, degree: event.target.value } : item
+                              )
+                            }))
+                          }
+                        />
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <label className="field-label">Field of study</label>
+                      <div className="mt-2">
+                        <FieldOfStudyAutocomplete
+                          value={entry.displayFieldOfStudy || entry.fieldOfStudy || entry.major}
+                          onSelect={(next) =>
+                            setProfile((current) => ({
+                              ...current,
+                              education: current.education.map((item) =>
+                                item.id === entry.id
+                                  ? {
+                                      ...item,
+                                      major: next.displayFieldOfStudy,
+                                      fieldOfStudy: next.displayFieldOfStudy,
+                                      displayFieldOfStudy: next.displayFieldOfStudy,
+                                      normalizedFieldOfStudy: next.normalizedFieldOfStudy
+                                    }
+                                  : item
+                              )
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="field-label">Graduation status</label>
+                      <select
+                        className="field-input mt-2"
+                        value={entry.graduationStatus}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) =>
+                              item.id === entry.id
+                                ? {
+                                    ...item,
+                                    graduationStatus: event.target.value as EducationEntry["graduationStatus"],
+                                    graduationDateType:
+                                      event.target.value === "expected" || event.target.value === "currently_enrolled" ? "expected" : item.graduationDateType
+                                  }
+                                : item
+                            )
+                          }))
+                        }
+                      >
+                        {graduationStatusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="field-label">{entry.graduationStatus === "expected" || entry.graduationStatus === "currently_enrolled" ? "Expected graduation month" : "Graduation month"}</label>
+                      <input
+                        type="month"
+                        className="field-input mt-2"
+                        value={entry.graduationDate}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) =>
+                              item.id === entry.id
+                                ? {
+                                    ...item,
+                                    graduationDate: event.target.value,
+                                    graduationDateType: entry.graduationStatus === "expected" || entry.graduationStatus === "currently_enrolled" ? "expected" : "actual"
+                                  }
+                                : item
+                            )
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label">Start month</label>
+                      <input
+                        type="month"
+                        className="field-input mt-2"
+                        value={entry.startDate}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) => (item.id === entry.id ? { ...item, startDate: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label">School location</label>
+                      <input
+                        className="field-input mt-2"
+                        value={entry.location}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) => (item.id === entry.id ? { ...item, location: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label">GPA (optional)</label>
+                      <input
+                        className="field-input mt-2"
+                        value={entry.gpa}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            education: current.education.map((item) => (item.id === entry.id ? { ...item, gpa: event.target.value } : item))
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              const next = createEducationEntry();
+              setProfile((current) => ({ ...current, education: [...current.education, next] }));
+              setEditingEducationId(next.id);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add education entry
+          </button>
+        </div>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Skills and professional links"
+        description="Keep the links and skills you want reused most often within easy reach."
+        summary="Skills stay chip-based, and links are validated before they save."
+        open={openSections.skills}
+        onToggle={() => setSectionOpen("skills")}
+      >
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-5">
+            <div>
+              <label className="field-label">Skills</label>
+              <div className="mt-3">
+                <SkillSelector
+                  value={profile.skillsProfile.skills}
+                  onChange={(next) =>
+                    setProfile((current) => ({
+                      ...current,
+                      skillsProfile: {
+                        ...current.skillsProfile,
+                        skills: next
+                      }
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {[
+                ["linkedin", "LinkedIn"],
+                ["github", "GitHub"],
+                ["portfolio", "Portfolio"],
+                ["website", "Website"],
+                ["otherLink", "Other professional link"]
+              ].map(([field, label]) => {
+                const key = field as ProfileLinkField;
+                return (
+                  <div key={field}>
+                    <label className="field-label">{label}</label>
+                    <input
+                      className={cn("field-input mt-2", linkErrors[key] ? "border-rose-300 pr-10" : "")}
+                      value={String(profile.identity[key] ?? "")}
+                      placeholder={label === "LinkedIn" ? "linkedin.com/in/your-name" : label === "GitHub" ? "github.com/your-name" : "https://"}
+                      onBlur={(event) => setIdentityField(key, event.target.value.trim())}
+                      onChange={(event) => setIdentityField(key, event.target.value)}
+                    />
+                    {linkErrors[key] ? <p className="mt-2 text-sm text-rose-600">{linkErrors[key]}</p> : null}
+                  </div>
+                );
+              })}
+
+              <div>
+                <label className="field-label">Default website answer</label>
+                <select
+                  className="field-input mt-2"
+                  value={profile.identity.genericWebsiteFallback}
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      identity: {
+                        ...current.identity,
+                        genericWebsiteFallback: event.target.value as ApplicantProfile["identity"]["genericWebsiteFallback"]
+                      }
+                    }))
+                  }
+                >
+                  {websiteFallbackOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[26px] bg-slate-50/70 p-5 ring-1 ring-slate-200">
+            <p className="field-label">Saved answers</p>
+            <p className="mt-3 text-base font-medium text-slate-950">Keep reusable written answers separate from your core profile.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              For questions like “Why this role?” or “Tell us about yourself,” edit your human-reviewed answers in the Answer Bank.
+            </p>
+            <Link href="/answer-bank" className="secondary-button mt-5 w-full justify-center">
+              Open Answer Bank
+            </Link>
+          </div>
+        </div>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Job preferences"
+        description="Capture only the preferences you expect to reuse regularly."
+        summary="Job types, location preferences, availability, and compensation stay concise."
+        open={openSections.preferences}
+        onToggle={() => setSectionOpen("preferences")}
+      >
+        <div className="space-y-5">
+          <div>
+            <label className="field-label">Preferred job types</label>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {jobTypeOptions.map((option) => {
+                const active = profile.preferencesProfile.jobTypes.includes(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={cn("rounded-full px-4 py-2 text-sm font-medium transition", active ? "bg-slate-900 text-white" : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50")}
+                    onClick={() =>
+                      setProfile((current) => ({
+                        ...current,
+                        preferencesProfile: {
+                          ...current.preferencesProfile,
+                          jobTypes: active
+                            ? current.preferencesProfile.jobTypes.filter((jobType) => jobType !== option.value)
+                            : [...current.preferencesProfile.jobTypes, option.value as JobType]
+                        }
+                      }))
+                    }
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="field-label">Locations you'd consider</label>
+            <div className="mt-3">
+              <LocationPreferenceSelector
+                value={profile.preferencesProfile.locationsOpenTo}
+                onChange={(next) =>
+                  setProfile((current) => ({
+                    ...current,
+                    preferencesProfile: {
+                      ...current.preferencesProfile,
+                      locationsOpenTo: next
+                    }
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <label className="field-label">When can you start?</label>
               <select
                 className="field-input mt-2"
-                value={String(profile.workAuthorizationProfile[key as keyof ApplicantProfile["workAuthorizationProfile"]])}
+                value={profile.availabilityProfile.startTiming}
                 onChange={(event) =>
                   setProfile((current) => ({
                     ...current,
-                    workAuthorizationProfile: {
-                      ...current.workAuthorizationProfile,
-                      [key]: event.target.value
+                    availabilityProfile: {
+                      ...current.availabilityProfile,
+                      startTiming: event.target.value as ApplicantProfile["availabilityProfile"]["startTiming"]
                     }
                   }))
                 }
               >
-                {binaryChoiceOptions.map((option) => (
+                {availabilityTimingOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
             </div>
-          ))}
-        </div>
-      </SectionCard>
 
-      <SectionCard title="Security Clearance" description="These answers are never inferred. Save them only if you want ApplyPilot to reuse them exactly when a compatible form option is present.">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div>
-            <label className="field-label">Clearance level</label>
-            <select
-              className="field-input mt-2"
-              value={profile.securityProfile.clearanceLevel}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  securityProfile: {
-                    ...current.securityProfile,
-                    clearanceLevel: event.target.value as ApplicantProfile["securityProfile"]["clearanceLevel"]
+            {profile.availabilityProfile.startTiming === "custom_date" ? (
+              <div>
+                <label className="field-label">Specific start date</label>
+                <input
+                  type="date"
+                  className="field-input mt-2"
+                  value={profile.availabilityProfile.customStartDate}
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      availabilityProfile: {
+                        ...current.availabilityProfile,
+                        customStartDate: event.target.value
+                      }
+                    }))
                   }
-                }))
-              }
-            >
-              {securityClearanceLevelOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="field-label">Clearance status</label>
-            <select
-              className="field-input mt-2"
-              value={profile.securityProfile.clearanceStatus}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  securityProfile: {
-                    ...current.securityProfile,
-                    clearanceStatus: event.target.value as ApplicantProfile["securityProfile"]["clearanceStatus"]
-                  }
-                }))
-              }
-            >
-              {clearanceStatusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="field-label">Expiration date</label>
-            <input
-              type="date"
-              className="field-input mt-2"
-              value={profile.securityProfile.clearanceExpirationDate}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  securityProfile: {
-                    ...current.securityProfile,
-                    clearanceExpirationDate: event.target.value
-                  }
-                }))
-              }
-            />
-          </div>
-          <div>
-            <label className="field-label">Issuing authority</label>
-            <input
-              className="field-input mt-2"
-              value={profile.securityProfile.issuingAuthority}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  securityProfile: {
-                    ...current.securityProfile,
-                    issuingAuthority: event.target.value
-                  }
-                }))
-              }
-            />
-          </div>
-        </div>
-      </SectionCard>
+                />
+              </div>
+            ) : null}
 
-      <SectionCard title="Availability" description="Structured availability is easier for ApplyPilot to adapt than custom prose.">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <div>
-            <label className="field-label">When can you start?</label>
-            <select
-              className="field-input mt-2"
-              value={profile.availabilityProfile.startTiming}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  availabilityProfile: {
-                    ...current.availabilityProfile,
-                    startTiming: event.target.value as ApplicantProfile["availabilityProfile"]["startTiming"]
-                  }
-                }))
-              }
-            >
-              {availabilityTimingOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          {profile.availabilityProfile.startTiming === "custom_date" ? (
             <div>
-              <label className="field-label">Specific start date</label>
-              <input
-                type="date"
+              <label className="field-label">Preferred salary answer</label>
+              <select
                 className="field-input mt-2"
-                value={profile.availabilityProfile.customStartDate}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    availabilityProfile: {
-                      ...current.availabilityProfile,
-                      customStartDate: event.target.value
-                    }
-                  }))
-                }
-              />
-            </div>
-          ) : null}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Compensation" description="Store numeric values once and let ApplyPilot format them for salary or hourly questions.">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            ["minimumSalary", "Minimum salary"],
-            ["targetSalary", "Target salary"],
-            ["highSalary", "Maximum salary"],
-            ["hourlyMinimum", "Minimum hourly rate"],
-            ["hourlyTarget", "Target hourly rate"]
-          ].map(([key, label]) => (
-            <div key={key}>
-              <label className="field-label">{label}</label>
-              <input
-                type="number"
-                className="field-input mt-2"
-                placeholder="Enter a number"
-                value={profile.compensationProfile[key as keyof ApplicantProfile["compensationProfile"]] ?? ""}
+                value={profile.compensationProfile.answerStyle}
                 onChange={(event) =>
                   setProfile((current) => ({
                     ...current,
                     compensationProfile: {
                       ...current.compensationProfile,
-                      [key]: event.target.value ? Number(event.target.value) : null
+                      answerStyle: event.target.value as ApplicantProfile["compensationProfile"]["answerStyle"]
                     }
                   }))
                 }
-              />
+              >
+                {compensationAnswerStyleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          ))}
-          <div>
-            <label className="field-label">Preferred answer format</label>
-            <select
-              className="field-input mt-2"
-              value={profile.compensationProfile.answerStyle}
-              onChange={(event) =>
-                setProfile((current) => ({
-                  ...current,
-                  compensationProfile: {
-                    ...current.compensationProfile,
-                    answerStyle: event.target.value as ApplicantProfile["compensationProfile"]["answerStyle"]
+
+            {[
+              ["minimumSalary", "Minimum salary"],
+              ["targetSalary", "Target salary"],
+              ["highSalary", "High salary"],
+              ["hourlyMinimum", "Minimum hourly rate"],
+              ["hourlyTarget", "Target hourly rate"]
+            ].map(([key, label]) => (
+              <div key={key}>
+                <label className="field-label">{label}</label>
+                <input
+                  type="number"
+                  className="field-input mt-2"
+                  value={profile.compensationProfile[key as keyof ApplicantProfile["compensationProfile"]] ?? ""}
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      compensationProfile: {
+                        ...current.compensationProfile,
+                        [key]: event.target.value ? Number(event.target.value) : null
+                      }
+                    }))
                   }
-                }))
-              }
-            >
-              {compensationAnswerStyleOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+                />
+              </div>
+            ))}
           </div>
         </div>
-      </SectionCard>
+      </DisclosureSection>
 
-      <SectionCard title="Education" description="Store explicit education facts so ApplyPilot can safely derive highest education, graduation status, and expected versus actual dates.">
-        <div className="space-y-4">
-          {profile.education.map((entry, index) => (
-            <div key={entry.id} className="rounded-[24px] border border-slate-200 bg-slate-50/60 p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-900">Education entry {index + 1}</p>
-                <button
-                  type="button"
-                  className="secondary-button px-3 py-2"
-                  onClick={() =>
-                    setProfile((current) => ({
-                      ...current,
-                      education: current.education.filter((item) => item.id !== entry.id)
-                    }))
-                  }
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Remove
-                </button>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <div className="md:col-span-2">
-                  <label className="field-label">School</label>
-                  <div className="mt-2">
-                    <SchoolAutocomplete
-                      value={entry.school}
-                      onSelect={(next) =>
-                        setProfile((current) => ({
-                          ...current,
-                          education: current.education.map((item) =>
-                            item.id === entry.id ? { ...item, school: next.school, normalizedSchoolName: next.normalizedSchoolName } : item
-                          )
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="field-label">Degree type</label>
-                  <select
-                    className="field-input mt-2"
-                    value={entry.degreeType}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        education: current.education.map((item) =>
-                          item.id === entry.id
-                            ? {
-                                ...item,
-                                degreeType: event.target.value as EducationEntry["degreeType"],
-                                degree: event.target.selectedOptions[0]?.textContent ?? "",
-                                degreeLevel: degreeTypeOptions.find((option) => option.value === event.target.value)?.degreeLevel ?? ""
-                              }
-                            : item
-                        )
-                      }))
-                    }
-                  >
-                    <option value="">Select a degree type</option>
-                    {degreeTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {entry.degreeType === "other" ? (
-                  <div>
-                    <label className="field-label">Custom degree</label>
-                    <input
-                      className="field-input mt-2"
-                      value={entry.degreeCustomValue}
-                      onChange={(event) =>
-                        setProfile((current) => ({
-                          ...current,
-                          education: current.education.map((item) =>
-                            item.id === entry.id ? { ...item, degreeCustomValue: event.target.value, degree: event.target.value } : item
-                          )
-                        }))
-                      }
-                    />
-                  </div>
-                ) : null}
-
-                <div>
-                  <label className="field-label">Field of study</label>
-                  <div className="mt-2">
-                    <FieldOfStudyAutocomplete
-                      value={entry.displayFieldOfStudy || entry.fieldOfStudy || entry.major}
-                      onSelect={(next) =>
-                        setProfile((current) => ({
-                          ...current,
-                          education: current.education.map((item) =>
-                            item.id === entry.id
-                              ? {
-                                  ...item,
-                                  major: next.displayFieldOfStudy,
-                                  fieldOfStudy: next.displayFieldOfStudy,
-                                  displayFieldOfStudy: next.displayFieldOfStudy,
-                                  normalizedFieldOfStudy: next.normalizedFieldOfStudy
-                                }
-                              : item
-                          )
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="field-label">Graduation status</label>
-                  <select
-                    className="field-input mt-2"
-                    value={entry.graduationStatus}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        education: current.education.map((item) =>
-                          item.id === entry.id ? { ...item, graduationStatus: event.target.value as EducationEntry["graduationStatus"] } : item
-                        )
-                      }))
-                    }
-                  >
-                    {graduationStatusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="field-label">Graduation date type</label>
-                  <select
-                    className="field-input mt-2"
-                    value={entry.graduationDateType}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        education: current.education.map((item) =>
-                          item.id === entry.id ? { ...item, graduationDateType: event.target.value as EducationEntry["graduationDateType"] } : item
-                        )
-                      }))
-                    }
-                  >
-                    {graduationDateTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="field-label">Graduation date</label>
-                  <input
-                    type="month"
-                    className="field-input mt-2"
-                    value={entry.graduationDate}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        education: current.education.map((item) =>
-                          item.id === entry.id ? { ...item, graduationDate: event.target.value } : item
-                        )
-                      }))
-                    }
-                  />
-                </div>
-
-                <div>
-                  <label className="field-label">GPA (optional)</label>
-                  <input
-                    className="field-input mt-2"
-                    value={entry.gpa}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        education: current.education.map((item) => (item.id === entry.id ? { ...item, gpa: event.target.value } : item))
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() =>
-              setProfile((current) => ({
-                ...current,
-                education: [...current.education, createEducationEntry()]
-              }))
-            }
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add education
-          </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Employment History" description="Add enough work history for ApplyPilot to answer current-employer and former-employer questions safely.">
-        <div className="space-y-4">
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={profile.workHistoryComplete}
-              onChange={(event) => setProfile((current) => ({ ...current, workHistoryComplete: event.target.checked }))}
-            />
-            My saved work history is complete enough to answer former-employer questions.
-          </label>
-
-          {profile.experience.map((entry, index) => (
-            <div key={entry.id} className="rounded-[24px] border border-slate-200 bg-slate-50/60 p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-900">Employment entry {index + 1}</p>
-                <button
-                  type="button"
-                  className="secondary-button px-3 py-2"
-                  onClick={() =>
-                    setProfile((current) => ({
-                      ...current,
-                      experience: current.experience.filter((item) => item.id !== entry.id)
-                    }))
-                  }
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Remove
-                </button>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {[
-                  ["company", "Employer"],
-                  ["title", "Role title"],
-                  ["location", "Location"],
-                  ["startDate", "Start date"],
-                  ["endDate", "End date"]
-                ].map(([key, label]) => (
-                  <div key={key}>
-                    <label className="field-label">{label}</label>
-                    <input
-                      className="field-input mt-2"
-                      value={String(entry[key as keyof ExperienceEntry] ?? "")}
-                      onChange={(event) =>
-                        setProfile((current) => ({
-                          ...current,
-                          experience: current.experience.map((item) => (item.id === entry.id ? { ...item, [key]: event.target.value } : item))
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-
-                <div className="md:col-span-2 xl:col-span-3">
-                  <label className="field-label">Company aliases (optional)</label>
-                  <input
-                    className="field-input mt-2"
-                    placeholder="Comma-separated aliases, such as IBM, International Business Machines"
-                    value={entry.aliases.join(", ")}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        experience: current.experience.map((item) =>
-                          item.id === entry.id
-                            ? {
-                                ...item,
-                                aliases: event.target.value
-                                  .split(",")
-                                  .map((alias) => alias.trim())
-                                  .filter(Boolean)
-                              }
-                            : item
-                        )
-                      }))
-                    }
-                  />
-                </div>
-
-                <label className="mt-6 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={entry.currentRole}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        experience: current.experience.map((item) => (item.id === entry.id ? { ...item, currentRole: event.target.checked } : item))
-                      }))
-                    }
-                  />
-                  Current role
-                </label>
-
-                <div className="md:col-span-2 xl:col-span-3">
-                  <label className="field-label">Description</label>
-                  <textarea
-                    className="subtle-textarea mt-2"
-                    value={entry.summary}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        experience: current.experience.map((item) => (item.id === entry.id ? { ...item, summary: event.target.value } : item))
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() =>
-              setProfile((current) => ({
-                ...current,
-                experience: [...current.experience, createExperienceEntry()]
-              }))
-            }
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add employment entry
-          </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Skills" description="Keep reusable skills structured so ApplyPilot can reuse them across text fields and chips without guessing.">
-        <SkillSelector
-          value={profile.skillsProfile.skills}
-          onChange={(next) =>
-            setProfile((current) => ({
-              ...current,
-              skillsProfile: {
-                ...current.skillsProfile,
-                skills: next
-              }
-            }))
-          }
-        />
-      </SectionCard>
-
-      <details className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
-        <summary className="cursor-pointer font-display text-xl font-semibold tracking-tight text-slate-950">Professional Background</summary>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-          This section powers better “tell us about yourself,” “why this role,” and “why should we hire you” answers without inventing anything. Keep it factual, short, and reusable.
-        </p>
-        <div className="mt-5 space-y-5">
+      <DisclosureSection
+        title="Professional background"
+        description="Keep this short. The goal is just enough trusted context for better tailored answers tomorrow."
+        summary="Summary, target roles, career direction, strengths, accomplishments, and projects."
+        open={openSections.background}
+        onToggle={() => setSectionOpen("background")}
+      >
+        <div className="space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <label className="field-label">Professional summary</label>
               <textarea
-                className="field-input mt-2 min-h-[120px]"
-                placeholder="A concise professional summary grounded in your actual background."
+                className="field-input mt-2 min-h-[110px]"
+                placeholder="A few sentences grounded in your actual background."
                 value={profile.professionalBackground.professionalSummary}
                 onChange={(event) =>
                   setProfile((current) => ({
@@ -1152,7 +1425,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               <label className="field-label">Current identity</label>
               <input
                 className="field-input mt-2"
-                placeholder="Data-focused software engineer"
+                placeholder="Product-minded software engineer"
                 value={profile.professionalBackground.currentIdentity}
                 onChange={(event) =>
                   setProfile((current) => ({
@@ -1170,7 +1443,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
               <label className="field-label">Career direction</label>
               <input
                 className="field-input mt-2"
-                placeholder="Looking for product-minded engineering roles"
+                placeholder="Looking for thoughtful product and platform work"
                 value={profile.professionalBackground.careerDirection}
                 onChange={(event) =>
                   setProfile((current) => ({
@@ -1183,51 +1456,42 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
                 }
               />
             </div>
-
-            <div>
-              <label className="field-label">Target role categories</label>
-              <input
-                className="field-input mt-2"
-                placeholder="Product engineering, data tooling, frontend platform"
-                value={profile.professionalBackground.targetRoleCategories.join(", ")}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    professionalBackground: {
-                      ...current.professionalBackground,
-                      targetRoleCategories: normalizeCommaSeparatedList(event.target.value)
-                    }
-                  }))
-                }
-              />
-            </div>
-
-            <div>
-              <label className="field-label">Industries of interest</label>
-              <input
-                className="field-input mt-2"
-                placeholder="Developer tools, SaaS, fintech"
-                value={profile.professionalBackground.industriesOfInterest.join(", ")}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    professionalBackground: {
-                      ...current.professionalBackground,
-                      industriesOfInterest: normalizeCommaSeparatedList(event.target.value)
-                    }
-                  }))
-                }
-              />
-            </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ListEditor
-              label="Key strengths"
-              description="Reusable strengths that are actually supported by your experience."
+          <div className="grid gap-5 xl:grid-cols-2">
+            <ManualChipEditor
+              label="Target roles"
+              helper="Add short role families you want the answer system to keep in mind."
+              placeholder="Full-stack engineering"
+              values={profile.professionalBackground.targetRoleCategories}
+              onChange={(next) =>
+                setProfile((current) => ({
+                  ...current,
+                  professionalBackground: {
+                    ...current.professionalBackground,
+                    targetRoleCategories: next
+                  }
+                }))
+              }
+            />
+            <ManualChipEditor
+              label="Industries of interest"
+              placeholder="Developer tools"
+              values={profile.professionalBackground.industriesOfInterest}
+              onChange={(next) =>
+                setProfile((current) => ({
+                  ...current,
+                  professionalBackground: {
+                    ...current.professionalBackground,
+                    industriesOfInterest: next
+                  }
+                }))
+              }
+            />
+            <ManualChipEditor
+              label="Strengths"
+              placeholder="Cross-functional communication"
               values={profile.professionalBackground.keyStrengths}
-              placeholder="Example: Turning messy workflows into clear, reliable product experiences."
-              addLabel="Add strength"
               onChange={(next) =>
                 setProfile((current) => ({
                   ...current,
@@ -1238,13 +1502,10 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
                 }))
               }
             />
-
-            <ListEditor
-              label="Key accomplishments"
-              description="High-signal achievements you are comfortable reusing in tailored answers."
+            <ManualChipEditor
+              label="Accomplishments"
+              placeholder="Shipped an internal workflow tool"
               values={profile.professionalBackground.keyAccomplishments}
-              placeholder="Example: Built an internal tool that reduced repetitive application prep work."
-              addLabel="Add accomplishment"
               onChange={(next) =>
                 setProfile((current) => ({
                   ...current,
@@ -1255,13 +1516,10 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
                 }))
               }
             />
-
-            <ListEditor
+            <ManualChipEditor
               label="Important projects"
-              description="Projects the generator can reference when a role asks for relevant experience."
+              placeholder="Application workflow assistant"
               values={profile.professionalBackground.importantProjects}
-              placeholder="Example: Built and shipped a local job-application workflow assistant in Next.js."
-              addLabel="Add project"
               onChange={(next) =>
                 setProfile((current) => ({
                   ...current,
@@ -1272,13 +1530,10 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
                 }))
               }
             />
-
-            <ListEditor
-              label="Reasons for seeking"
-              description="Real motivations you want ApplyPilot to reuse for role- or company-interest answers."
+            <ManualChipEditor
+              label="Reasons you're exploring"
+              placeholder="More product ownership"
               values={profile.professionalBackground.reasonsForSeeking}
-              placeholder="Example: I want to work on products where thoughtful UX and reliable execution both matter."
-              addLabel="Add reason"
               onChange={(next) =>
                 setProfile((current) => ({
                   ...current,
@@ -1291,358 +1546,397 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
             />
           </div>
         </div>
-      </details>
+      </DisclosureSection>
 
-      <details className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
-        <summary className="cursor-pointer font-display text-xl font-semibold tracking-tight text-slate-950">Behavioral Stories</summary>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-          Save a few STAR-style examples here so ApplyPilot can recognize when a prompt needs a real story instead of guessing. Leave blank stories empty until you want to fill them in.
-        </p>
-        <div className="mt-5 space-y-4">
-          {profile.stories.map((story, index) => (
-            <div key={story.id || index} className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Story {index + 1}</p>
-                  <p className="mt-1 text-sm text-slate-600">Use concrete facts only. ApplyPilot will not invent missing parts.</p>
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button px-3 py-2"
-                  onClick={() =>
-                    setProfile((current) => ({
-                      ...current,
-                      stories: current.stories.length === 1 ? [createEmptyStory()] : current.stories.filter((_, storyIndex) => storyIndex !== index)
-                    }))
-                  }
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Remove
-                </button>
-              </div>
-
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="field-label">Title</label>
-                  <input
-                    className="field-input mt-2"
-                    placeholder="Cross-functional launch under a tight deadline"
-                    value={story.title}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        stories: current.stories.map((entry, storyIndex) =>
-                          storyIndex === index ? { ...entry, title: event.target.value } : entry
-                        )
-                      }))
-                    }
-                  />
-                </div>
-
-                <div>
-                  <label className="field-label">Tags</label>
-                  <input
-                    className="field-input mt-2"
-                    placeholder="leadership, conflict, prioritization"
-                    value={story.tags.join(", ")}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        stories: current.stories.map((entry, storyIndex) =>
-                          storyIndex === index ? { ...entry, tags: normalizeCommaSeparatedList(event.target.value) } : entry
-                        )
-                      }))
-                    }
-                  />
-                </div>
-
-                {[
-                  ["situation", "Situation", "What was happening?"],
-                  ["action", "Action", "What did you specifically do?"],
-                  ["result", "Result", "What measurable or concrete outcome happened?"]
-                ].map(([key, label, placeholder]) => (
-                  <div key={key} className={key === "result" ? "md:col-span-2" : ""}>
-                    <label className="field-label">{label}</label>
-                    <textarea
-                      className="field-input mt-2 min-h-[110px]"
-                      placeholder={placeholder}
-                      value={story[key as keyof BehavioralStory] as string}
-                      onChange={(event) =>
-                        setProfile((current) => ({
-                          ...current,
-                          stories: current.stories.map((entry, storyIndex) =>
-                            storyIndex === index ? { ...entry, [key]: event.target.value } : entry
-                          )
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() =>
-              setProfile((current) => ({
-                ...current,
-                stories: [...current.stories, createEmptyStory()]
-              }))
-            }
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add another story
-          </button>
-        </div>
-      </details>
-
-      <SectionCard title="Work Preferences" description="Save preferred employment types and locations once.">
-        <div className="space-y-5">
-          <div>
-            <p className="field-label">Employment types open to</p>
-            <div className="mt-3 flex flex-wrap gap-3">
-              {jobTypeOptions.map((option) => (
-                <label key={option.value} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={profile.preferencesProfile.jobTypes.includes(option.value)}
-                    onChange={(event) =>
-                      setProfile((current) => ({
-                        ...current,
-                        preferencesProfile: {
-                          ...current.preferencesProfile,
-                          jobTypes: event.target.checked
-                            ? [...current.preferencesProfile.jobTypes, option.value]
-                            : current.preferencesProfile.jobTypes.filter((value) => value !== option.value)
-                        }
-                      }))
-                    }
-                  />
-                  {option.label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="field-label">Preferred locations</label>
-            <div className="mt-2">
-              <LocationPreferenceSelector
-                value={profile.preferencesProfile.locationsOpenTo}
-                onChange={(next) =>
-                  setProfile((current) => ({
-                    ...current,
-                    preferencesProfile: {
-                      ...current.preferencesProfile,
-                      locationsOpenTo: next
-                    }
-                  }))
-                }
-              />
-            </div>
-          </div>
-        </div>
-      </SectionCard>
-
-      <details className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
-        <summary className="cursor-pointer font-display text-xl font-semibold tracking-tight text-slate-950">Sensitive / EEOC</summary>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-          These answers are never inferred. If you save an actual answer, ApplyPilot will reuse it only when a compatible visible option is found. If you choose Ask me every time, it will stay in review.
-        </p>
-        <div className="mt-5 grid gap-5 md:grid-cols-2">
-          {eeocSingleSections.map(({ key, label, options }) => {
-            const setting = profile.eeocDefaults[key];
-            const needsCustomInput = setting.value === "Another identity";
-
+      <DisclosureSection
+        title="Behavioral stories"
+        description="Capture real examples in human terms so you can quickly review them later."
+        summary={profile.stories.some((story) => story.title || story.situation || story.action || story.result) ? `${profile.stories.length} saved stor${profile.stories.length === 1 ? "y" : "ies"}` : "No stories saved yet."}
+        open={openSections.stories}
+        onToggle={() => setSectionOpen("stories")}
+      >
+        <div className="space-y-4">
+          {profile.stories.map((story, index) => {
+            const isEditing = editingStoryId === story.id;
             return (
-              <div key={key} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
-                <p className="text-sm font-semibold text-slate-900">{label}</p>
-                <div className="mt-3 space-y-3">
-                  <div>
-                    <label className="field-label">Saved answer</label>
-                    <select
-                      className="field-input mt-2"
-                      value={setting.value}
-                      onChange={(event) =>
+              <div key={story.id} className="rounded-[26px] bg-slate-50/70 p-4 ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="max-w-3xl">
+                    <p className="text-sm font-semibold text-slate-900">{summarizeStory(story, index)}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">{getStoryPreview(story)}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="secondary-button px-3 py-2" onClick={() => setEditingStoryId(isEditing ? null : story.id)}>
+                      <PencilLine className="mr-2 h-4 w-4" />
+                      {isEditing ? "Collapse" : "Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button px-3 py-2"
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${story.title || `story ${index + 1}`}?`)) return;
                         setProfile((current) => ({
                           ...current,
-                          eeocDefaults: {
-                            ...current.eeocDefaults,
-                            [key]: {
-                              ...current.eeocDefaults[key],
-                              value: event.target.value
-                            }
-                          }
-                        }))
-                      }
+                          stories: current.stories.length === 1 ? [createStory()] : current.stories.filter((item) => item.id !== story.id)
+                        }));
+                        if (editingStoryId === story.id) {
+                          setEditingStoryId(null);
+                        }
+                      }}
                     >
-                      {options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Remove
+                    </button>
                   </div>
+                </div>
 
-                  {needsCustomInput ? (
-                    <div>
-                      <label className="field-label">Custom answer</label>
-                      <input
-                        className="field-input mt-2"
-                        value={setting.customValue}
-                        onChange={(event) =>
+                {isEditing ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="field-label">Story title</label>
+                        <input
+                          className="field-input mt-2"
+                          placeholder="Launching a feature under a tight deadline"
+                          value={story.title}
+                          onChange={(event) =>
+                            setProfile((current) => ({
+                              ...current,
+                              stories: current.stories.map((entry) => (entry.id === story.id ? { ...entry, title: event.target.value } : entry))
+                            }))
+                          }
+                        />
+                      </div>
+
+                      <ManualChipEditor
+                        label="Skills demonstrated"
+                        placeholder="Leadership"
+                        values={story.tags}
+                        onChange={(next) =>
                           setProfile((current) => ({
                             ...current,
-                            eeocDefaults: {
-                              ...current.eeocDefaults,
-                              [key]: {
-                                ...current.eeocDefaults[key],
-                                customValue: event.target.value
-                              }
-                            }
+                            stories: current.stories.map((entry) => (entry.id === story.id ? { ...entry, tags: next } : entry))
                           }))
                         }
                       />
                     </div>
-                  ) : null}
-                </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="field-label">Situation</label>
+                        <textarea
+                          className="field-input mt-2 min-h-[110px]"
+                          placeholder="What was happening?"
+                          value={story.situation}
+                          onChange={(event) =>
+                            setProfile((current) => ({
+                              ...current,
+                              stories: current.stories.map((entry) => (entry.id === story.id ? { ...entry, situation: event.target.value } : entry))
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="field-label">Action</label>
+                        <textarea
+                          className="field-input mt-2 min-h-[110px]"
+                          placeholder="What did you do?"
+                          value={story.action}
+                          onChange={(event) =>
+                            setProfile((current) => ({
+                              ...current,
+                              stories: current.stories.map((entry) => (entry.id === story.id ? { ...entry, action: event.target.value } : entry))
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="field-label">Result</label>
+                      <textarea
+                        className="field-input mt-2 min-h-[110px]"
+                        placeholder="What changed or improved?"
+                        value={story.result}
+                        onChange={(event) =>
+                          setProfile((current) => ({
+                            ...current,
+                            stories: current.stories.map((entry) => (entry.id === story.id ? { ...entry, result: event.target.value } : entry))
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="rounded-[24px] bg-white p-4 ring-1 ring-slate-200">
+                      <p className="field-label">Preview</p>
+                      <p className="mt-3 text-sm leading-6 text-slate-700">{getStoryPreview(story)}</p>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             );
           })}
 
-          <div className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
-            <p className="text-sm font-semibold text-slate-900">Race / ethnicity</p>
-            <div className="mt-3 flex flex-wrap gap-3">
-              {eeocRaceOptions.map((option) => (
-                <label key={option} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={profile.eeocDefaults.raceEthnicity.values.includes(option)}
-                    onChange={(event) =>
-                      setProfile((current) => {
-                        const existing = new Set(current.eeocDefaults.raceEthnicity.values);
-                        if (option === "Ask me every time" || option === "Prefer not to answer") {
-                          return {
-                            ...current,
-                            eeocDefaults: {
-                              ...current.eeocDefaults,
-                              raceEthnicity: {
-                                ...current.eeocDefaults.raceEthnicity,
-                                values: event.target.checked ? [option] : []
-                              }
-                            }
-                          };
-                        }
-
-                        existing.delete("Ask me every time");
-                        if (event.target.checked) {
-                          existing.add(option);
-                        } else {
-                          existing.delete(option);
-                        }
-
-                        return {
-                          ...current,
-                          eeocDefaults: {
-                            ...current.eeocDefaults,
-                            raceEthnicity: {
-                              ...current.eeocDefaults.raceEthnicity,
-                              values: Array.from(existing)
-                            }
-                          }
-                        };
-                      })
-                    }
-                  />
-                  {option}
-                </label>
-              ))}
-            </div>
-          </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              const next = createStory();
+              setProfile((current) => ({ ...current, stories: [...current.stories, next] }));
+              setEditingStoryId(next.id);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add story
+          </button>
         </div>
-      </details>
+      </DisclosureSection>
 
-      <details className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
-        <summary className="cursor-pointer font-display text-xl font-semibold tracking-tight text-slate-950">Additional Application Questions</summary>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-          Keep this section light. These are common reusable questions that show up often enough to be worth saving, but they stay collapsed by default so the core profile stays calm.
-        </p>
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            ["validDriversLicense", "Valid driver's license"],
-            ["reliableTransportation", "Reliable transportation"],
-            ["meetsMinimumWorkingAge", "At least 18 years old"],
-            ["willingBackgroundCheck", "Willing to undergo background check"],
-            ["willingDrugScreen", "Willing to undergo drug screening"],
-            ["relatedFamilyAtCompany", "Related family employed by company"],
-            ["boundByNonCompete", "Bound by non-compete agreement"],
-            ["governmentEmploymentHistory", "Government employment history"],
-            ["willingToTravel", "Willing to travel"],
-            ["weekendAvailability", "Weekend availability"],
-            ["overtimeAvailability", "Overtime availability"]
-          ].map(([key, label]) => (
-            <div key={key}>
-              <label className="field-label">{label}</label>
+      <DisclosureSection
+        title="Optional demographic and additional answers"
+        description="Leave this section blank unless you want ApplyPilot to reuse exact saved answers when forms ask for them."
+        summary="These answers stay optional and are stored locally."
+        optional
+        open={openSections.optional}
+        onToggle={() => setSectionOpen("optional")}
+      >
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <label className="field-label">Security clearance level</label>
               <select
                 className="field-input mt-2"
-                value={String(profile.additionalApplicationFacts[key as keyof ApplicantProfile["additionalApplicationFacts"]])}
+                value={profile.securityProfile.clearanceLevel}
                 onChange={(event) =>
                   setProfile((current) => ({
                     ...current,
-                    additionalApplicationFacts: {
-                      ...current.additionalApplicationFacts,
-                      [key]: event.target.value
+                    securityProfile: {
+                      ...current.securityProfile,
+                      clearanceLevel: event.target.value as ApplicantProfile["securityProfile"]["clearanceLevel"]
                     }
                   }))
                 }
               >
-                {yesNoNotApplicableOptions.map((option) => (
+                {securityClearanceLevelOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
             </div>
-          ))}
 
-          {[
-            ["willingToTravelPercentage", "Travel percentage"],
-            ["shiftAvailability", "Shift availability"],
-            ["preferredEmploymentType", "Preferred employment type"],
-            ["referralSource", "Referral source"],
-            ["noticePeriod", "Current notice period"]
-          ].map(([key, label]) => (
-            <div key={key}>
-              <label className="field-label">{label}</label>
-              <input
+            <div>
+              <label className="field-label">Clearance status</label>
+              <select
                 className="field-input mt-2"
-                value={String(profile.additionalApplicationFacts[key as keyof ApplicantProfile["additionalApplicationFacts"]] ?? "")}
+                value={profile.securityProfile.clearanceStatus}
                 onChange={(event) =>
                   setProfile((current) => ({
                     ...current,
-                    additionalApplicationFacts: {
-                      ...current.additionalApplicationFacts,
-                      [key]: event.target.value
+                    securityProfile: {
+                      ...current.securityProfile,
+                      clearanceStatus: event.target.value as ApplicantProfile["securityProfile"]["clearanceStatus"]
+                    }
+                  }))
+                }
+              >
+                {clearanceStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="field-label">Clearance expiration date</label>
+              <input
+                type="date"
+                className="field-input mt-2"
+                value={profile.securityProfile.clearanceExpirationDate}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    securityProfile: {
+                      ...current.securityProfile,
+                      clearanceExpirationDate: event.target.value
                     }
                   }))
                 }
               />
             </div>
-          ))}
-        </div>
-      </details>
 
-      <div className="fixed bottom-4 left-1/2 z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-[24px] border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-600">{message || "Save after making profile changes."}</p>
-          <button type="button" className="primary-button" onClick={saveProfile} disabled={isPending || resumeBusy}>
-            {isPending ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            {isPending ? "Saving..." : "Save profile"}
-          </button>
+            <div>
+              <label className="field-label">Issuing authority</label>
+              <input
+                className="field-input mt-2"
+                value={profile.securityProfile.issuingAuthority}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    securityProfile: {
+                      ...current.securityProfile,
+                      issuingAuthority: event.target.value
+                    }
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <label className="field-label">Gender</label>
+              <select
+                className="field-input mt-2"
+                value={profile.eeocDefaults.gender.value}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    eeocDefaults: {
+                      ...current.eeocDefaults,
+                      gender: {
+                        ...current.eeocDefaults.gender,
+                        value: event.target.value
+                      }
+                    }
+                  }))
+                }
+              >
+                {eeocGenderOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="field-label">Race / ethnicity default</label>
+              <select
+                className="field-input mt-2"
+                value={profile.eeocDefaults.raceEthnicity.values[0] ?? "Ask me every time"}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    eeocDefaults: {
+                      ...current.eeocDefaults,
+                      raceEthnicity: {
+                        ...current.eeocDefaults.raceEthnicity,
+                        values: [event.target.value]
+                      }
+                    }
+                  }))
+                }
+              >
+                {eeocRaceOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="field-label">Veteran status</label>
+              <select
+                className="field-input mt-2"
+                value={profile.eeocDefaults.veteranStatus.value}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    eeocDefaults: {
+                      ...current.eeocDefaults,
+                      veteranStatus: {
+                        ...current.eeocDefaults.veteranStatus,
+                        value: event.target.value
+                      }
+                    }
+                  }))
+                }
+              >
+                {eeocVeteranOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="field-label">Disability status</label>
+              <select
+                className="field-input mt-2"
+                value={profile.eeocDefaults.disabilityStatus.value}
+                onChange={(event) =>
+                  setProfile((current) => ({
+                    ...current,
+                    eeocDefaults: {
+                      ...current.eeocDefaults,
+                      disabilityStatus: {
+                        ...current.eeocDefaults.disabilityStatus,
+                        value: event.target.value
+                      }
+                    }
+                  }))
+                }
+              >
+                {eeocDisabilityOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {additionalQuestionEntries.map(([key, label]) => {
+              const isTextField = key === "shiftAvailability" || key === "willingToTravelPercentage" || key === "preferredEmploymentType" || key === "referralSource" || key === "noticePeriod";
+              return (
+                <div key={key}>
+                  <label className="field-label">{label}</label>
+                  {isTextField ? (
+                    <input
+                      className="field-input mt-2"
+                      value={String(profile.additionalApplicationFacts[key] ?? "")}
+                      onChange={(event) =>
+                        setProfile((current) => ({
+                          ...current,
+                          additionalApplicationFacts: {
+                            ...current.additionalApplicationFacts,
+                            [key]: event.target.value
+                          }
+                        }))
+                      }
+                    />
+                  ) : (
+                    <select
+                      className="field-input mt-2"
+                      value={String(profile.additionalApplicationFacts[key] ?? "ask")}
+                      onChange={(event) =>
+                        setProfile((current) => ({
+                          ...current,
+                          additionalApplicationFacts: {
+                            ...current.additionalApplicationFacts,
+                            [key]: event.target.value
+                          }
+                        }))
+                      }
+                    >
+                      {yesNoNotApplicableOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      </DisclosureSection>
     </div>
   );
 }

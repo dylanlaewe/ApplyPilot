@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, X } from "lucide-react";
+import React from "react";
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";

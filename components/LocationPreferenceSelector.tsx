@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useMemo } from "react";
 
 import { getLocationDisplay, searchLocationPreferences } from "@/lib/locationCatalog";

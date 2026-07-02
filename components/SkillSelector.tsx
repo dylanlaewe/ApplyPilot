@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useMemo } from "react";
 
 import { SKILL_OPTIONS } from "@/lib/skillCatalog";

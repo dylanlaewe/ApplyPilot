@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 import { searchSchools } from "@/lib/schoolCatalog";
 
 import { AutocompleteCombobox } from "@/components/AutocompleteCombobox";
