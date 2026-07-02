@@ -27,6 +27,17 @@ export type SessionStatus =
   | "archived"
   | "abandoned";
 
+export type ApplicationDisplayStatus =
+  | "in_progress"
+  | "ready_to_review"
+  | "submitted"
+  | "interview"
+  | "offer"
+  | "rejected"
+  | "archived";
+
+export type SubmissionConfirmationState = "unknown" | "dismissed" | "not_yet" | "submitted";
+
 export type AnswerSensitivity = "safe" | "review" | "sensitive";
 export type ConfidenceLevel = "high" | "medium" | "needs_review";
 export type ReviewCategory =
@@ -803,6 +814,28 @@ export interface CaptchaDetectionResult {
   userMessage?: string;
 }
 
+export interface ApplicationStatusHistoryEntry {
+  id: string;
+  previousStatus: ApplicationDisplayStatus | null;
+  newStatus: ApplicationDisplayStatus;
+  timestamp: string;
+}
+
+export interface ApplicationNextStep {
+  description: string;
+  dueDate: string;
+  completed: boolean;
+}
+
+export interface ApplicationPreparationSummary {
+  durationSeconds: number | null;
+  fieldsCompleted: number;
+  questionsAnsweredByUser: number;
+  suggestedAnswersUsed: number;
+  correctionsMade: number;
+  retryCount: number;
+}
+
 export interface ApplicationSession {
   id: string;
   company: string;
@@ -812,6 +845,9 @@ export interface ApplicationSession {
   status: SessionStatus;
   statusMessage: string;
   nextAction: string;
+  applicationStatus?: ApplicationDisplayStatus;
+  statusHistory?: ApplicationStatusHistoryEntry[];
+  nextStep?: ApplicationNextStep | null;
   detectedFields: DetectedField[];
   notes: string;
   createdAt: string;
@@ -826,6 +862,7 @@ export interface ApplicationSession {
   atsProvider: "greenhouse" | "lever" | "ashby" | "workable" | "workday" | "generic";
   finalSubmitButtons: string[];
   resumeUsed: string;
+  resumeDisplayLabel?: string;
   currentPageUrl: string;
   visitedPageUrls: string[];
   currentPageNumber: number;
@@ -845,6 +882,9 @@ export interface ApplicationSession {
     provider: string;
     detail: string;
   };
+  preparationSummary?: ApplicationPreparationSummary;
+  submissionConfirmationState?: SubmissionConfirmationState;
+  submissionConfirmationUpdatedAt?: string;
   dogfoodTelemetry?: {
     sessionStartedAt?: string;
     applicationFormReachedAt?: string;

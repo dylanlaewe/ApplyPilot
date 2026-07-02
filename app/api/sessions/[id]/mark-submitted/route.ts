@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { appendAuditEntry, getApplicationSession, updateApplicationSession } from "@/lib/applications";
+import { applyUserFacingStatus } from "@/lib/applicationsExperience";
 import { createAuditEntry } from "@/lib/auditLog";
 
 export const runtime = "nodejs";
@@ -13,12 +14,11 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   }
 
   try {
+    const now = new Date().toISOString();
     const updated = await updateApplicationSession(id, (current) => ({
-      ...current,
-      status: "submitted",
+      ...applyUserFacingStatus(current, "submitted", now),
       statusMessage: "Submitted manually.",
       nextAction: "Track the outcome or archive the session when you are ready.",
-      submittedAt: new Date().toISOString(),
       timeSpentSeconds: current.timeSpentSeconds || Math.max(60, Math.round((Date.now() - new Date(current.createdAt).getTime()) / 1000))
     }));
     const withAudit = await appendAuditEntry(
