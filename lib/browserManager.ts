@@ -66,6 +66,7 @@ export async function getOrCreateSessionPage(
   options: {
     url?: string;
     navigate?: boolean;
+    reuseOpenPage?: boolean;
   } = {}
 ) {
   const context = await getOrCreateBrowserContext();
@@ -81,10 +82,29 @@ export async function getOrCreateSessionPage(
     return existing;
   }
 
+  if (options.reuseOpenPage) {
+    for (const [trackedSessionId, candidatePage] of state.pages.entries()) {
+      if (trackedSessionId === sessionId || candidatePage.isClosed()) {
+        continue;
+      }
+
+      state.pages.delete(trackedSessionId);
+      state.pages.set(sessionId, candidatePage);
+      await candidatePage.bringToFront().catch(() => undefined);
+      if (targetUrl && shouldNavigate && candidatePage.url() !== targetUrl) {
+        await candidatePage.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      }
+      return candidatePage;
+    }
+  }
+
   const page = await context.newPage();
   page.on("close", () => {
-    if (state.pages.get(sessionId) === page) {
-      state.pages.delete(sessionId);
+    for (const [trackedSessionId, trackedPage] of state.pages.entries()) {
+      if (trackedPage === page) {
+        state.pages.delete(trackedSessionId);
+        break;
+      }
     }
   });
 
@@ -137,7 +157,19 @@ export function getOpenSessionCount() {
   return Array.from(state.pages.values()).filter((page) => !page.isClosed()).length;
 }
 
-export async function resetBrowserManagerForTests() {
+export function getBrowserDiagnostics() {
+  const openSessions = Array.from(state.pages.entries())
+    .filter(([, page]) => !page.isClosed())
+    .map(([sessionId]) => sessionId);
+
+  return {
+    browserConnected: isBrowserAlive(state.browser),
+    openSessionCount: openSessions.length,
+    openSessionIds: openSessions
+  };
+}
+
+export async function clearBrowserManagerState() {
   for (const page of state.pages.values()) {
     if (!page.isClosed()) {
       await page.close().catch(() => undefined);
@@ -148,4 +180,8 @@ export async function resetBrowserManagerForTests() {
   await state.browser?.close().catch(() => undefined);
   state.context = null;
   state.browser = null;
+}
+
+export async function resetBrowserManagerForTests() {
+  await clearBrowserManagerState();
 }
