@@ -1,5 +1,14 @@
 import { createAuditEntry } from "@/lib/auditLog";
+import {
+  applyUserFacingStatus,
+  derivePreparationSummary,
+  mapSessionStatusToApplicationStatus,
+  normalizeApplicationSession,
+  normalizeApplicationSessions
+} from "@/lib/applicationsExperience";
 import { buildJobContext } from "@/lib/jobContext";
+import { getApplicantProfile } from "@/lib/profile";
+import { getResumeFilename } from "@/lib/profileExperience";
 import { readStorageFile, writeStorageFile } from "@/lib/storage";
 import { ApplicationSession, DashboardStats, DetectedField, NewSessionInput } from "@/types";
 
@@ -22,9 +31,9 @@ function summarizeCounts(fields: DetectedField[]) {
   };
 }
 
-function buildDefaultSession(input: NewSessionInput): ApplicationSession {
+function buildDefaultSession(input: NewSessionInput, resumeDisplayLabel: string): ApplicationSession {
   const now = new Date().toISOString();
-  return {
+  const session: ApplicationSession = {
     id: crypto.randomUUID(),
     company: input.company,
     roleTitle: input.roleTitle,
@@ -34,6 +43,16 @@ function buildDefaultSession(input: NewSessionInput): ApplicationSession {
     status: "created",
     statusMessage: "Ready to open the application.",
     nextAction: "Open the application page, then let ApplyPilot read the form when it becomes visible.",
+    applicationStatus: "in_progress",
+    statusHistory: [
+      {
+        id: crypto.randomUUID(),
+        previousStatus: null,
+        newStatus: "in_progress",
+        timestamp: now
+      }
+    ],
+    nextStep: null,
     detectedFields: [],
     createdAt: now,
     updatedAt: now,
@@ -42,7 +61,8 @@ function buildDefaultSession(input: NewSessionInput): ApplicationSession {
     browserStatus: "not_started",
     atsProvider: "generic",
     finalSubmitButtons: [],
-    resumeUsed: "",
+    resumeUsed: resumeDisplayLabel,
+    resumeDisplayLabel,
     captchaDetection: undefined,
     captchaOverridePageUrl: "",
     currentPageUrl: input.jobUrl,
@@ -77,11 +97,17 @@ function buildDefaultSession(input: NewSessionInput): ApplicationSession {
       autofillRetries: 0
     }
   };
+
+  session.preparationSummary = derivePreparationSummary(session);
+  session.submissionConfirmationState = "unknown";
+  session.submissionConfirmationUpdatedAt = "";
+
+  return session;
 }
 
 export async function getApplicationSessions() {
-  const sessions = await readStorageFile<ApplicationSession[]>(SESSIONS_FILE, []);
-  return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const sessions = await readStorageFile<unknown[]>(SESSIONS_FILE, []);
+  return normalizeApplicationSessions(sessions).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function getApplicationSession(id: string) {
@@ -91,7 +117,8 @@ export async function getApplicationSession(id: string) {
 
 export async function createApplicationSession(input: NewSessionInput) {
   const sessions = await getApplicationSessions();
-  const session = buildDefaultSession(input);
+  const profile = await getApplicantProfile();
+  const session = buildDefaultSession(input, getResumeFilename(profile));
   session.auditLog.push(createAuditEntry(session.id, "session_created", "Application session created."));
   await writeStorageFile(SESSIONS_FILE, [session, ...sessions]);
   return session;
@@ -106,13 +133,27 @@ export async function updateApplicationSession(
 
   const nextSessions = sessions.map((session) => {
     if (session.id !== id) return session;
-    const next = updater(session);
-    updatedSession = {
+    const next = normalizeApplicationSession(updater(session));
+    const hydrated = {
       ...next,
       ...summarizeCounts(next.detectedFields),
       updatedAt: new Date().toISOString()
     };
-    return updatedSession;
+    hydrated.preparationSummary = derivePreparationSummary(hydrated);
+    if (!hydrated.applicationStatus) {
+      hydrated.applicationStatus = mapSessionStatusToApplicationStatus(hydrated.status);
+    }
+    if (!hydrated.statusHistory?.length) {
+      hydrated.statusHistory = normalizeApplicationSession(hydrated).statusHistory;
+    }
+    if (!hydrated.resumeDisplayLabel && hydrated.resumeUsed) {
+      hydrated.resumeDisplayLabel = hydrated.resumeUsed;
+    }
+    if (!hydrated.submissionConfirmationState) {
+      hydrated.submissionConfirmationState = hydrated.applicationStatus === "submitted" ? "submitted" : "unknown";
+    }
+    updatedSession = hydrated;
+    return hydrated;
   });
 
   if (!updatedSession) {
@@ -186,21 +227,39 @@ export async function setSessionError(id: string, message: string) {
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   const sessions = await getApplicationSessions();
-  const submittedSessions = sessions.filter((session) => session.status === "submitted");
+  const submittedSessions = sessions.filter((session) => session.applicationStatus === "submitted");
   const avgTimeSeconds =
     submittedSessions.reduce((total, session) => total + (session.timeSpentSeconds || 0), 0) /
     (submittedSessions.length || 1);
 
   return {
-    applicationsStarted: sessions.filter((session) => !["archived", "abandoned"].includes(session.status)).length,
-    readyForReview: sessions.filter((session) => ["needs_review", "ready_for_submission"].includes(session.status)).length,
+    applicationsStarted: sessions.filter((session) => session.applicationStatus !== "archived").length,
+    readyForReview: sessions.filter((session) => session.applicationStatus === "ready_to_review").length,
     submittedManually: submittedSessions.length,
     needsAttention: sessions.filter(
       (session) =>
         Boolean(session.lastError) ||
         session.detectedFields.some((field) => ["needs_review", "sensitive", "error", "unknown"].includes(field.status))
     ).length,
-    interviews: sessions.filter((session) => session.status === "interview").length,
+    interviews: sessions.filter((session) => session.applicationStatus === "interview").length,
     averageTimeMinutes: Math.round((avgTimeSeconds / 60) * 10) / 10
   };
+}
+
+export async function deleteApplicationSession(id: string) {
+  const sessions = await getApplicationSessions();
+  const nextSessions = sessions.filter((session) => session.id !== id);
+  if (nextSessions.length === sessions.length) {
+    throw new Error("Session not found.");
+  }
+
+  await writeStorageFile(SESSIONS_FILE, nextSessions);
+}
+
+export async function updateApplicationDisplayStatus(id: string, status: ApplicationSession["applicationStatus"]) {
+  if (!status) {
+    throw new Error("Status is required.");
+  }
+
+  return updateApplicationSession(id, (session) => applyUserFacingStatus(session, status));
 }
