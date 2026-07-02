@@ -4,6 +4,7 @@ import { CheckCircle2, Pencil, SkipForward } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
 
 import { SaveAnswerPrompt } from "@/components/SaveAnswerPrompt";
+import { WrongAnswerReporter } from "@/components/WrongAnswerReporter";
 import { DetectedField } from "@/types";
 
 export function ReviewStepper({
@@ -11,12 +12,14 @@ export function ReviewStepper({
   onApprove,
   onSkip,
   onSaveAnswer,
+  onReportWrongAnswer,
   disabled
 }: {
   fields: DetectedField[];
   onApprove: (fieldId: string, value: string) => Promise<void>;
   onSkip: (fieldId: string) => Promise<void>;
   onSaveAnswer: (fieldId: string, value: string, canonicalQuestion: string) => Promise<void>;
+  onReportWrongAnswer: (fieldId: string, correctedValue: string, note: string, learningApproved: boolean) => Promise<void>;
   disabled?: boolean;
 }) {
   const reviewFields = useMemo(
@@ -100,6 +103,14 @@ export function ReviewStepper({
       <SaveAnswerPrompt
         disabled={disabled}
         onSave={(canonicalQuestion) => onSaveAnswer(currentField.id, draftValue, canonicalQuestion)}
+      />
+
+      <WrongAnswerReporter
+        currentValue={draftValue}
+        disabled={disabled}
+        onSubmit={({ correctedValue, note, learningApproved }) =>
+          onReportWrongAnswer(currentField.id, correctedValue, note, learningApproved)
+        }
       />
 
       <div className="mt-6 flex items-center justify-between">

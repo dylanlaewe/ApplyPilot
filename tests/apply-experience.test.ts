@@ -7,6 +7,7 @@ import { AppShellFrame } from "@/components/AppShellFrame";
 import { ApplicationSessionPanel } from "@/components/ApplicationSessionPanel";
 import { ApplyWorkspaceView } from "@/components/ApplyWorkspaceView";
 import { ReviewStepper } from "@/components/ReviewStepper";
+import { buildApplyReadinessReport } from "@/lib/applyReadiness";
 import {
   getApplyMode,
   getReviewFieldCount,
@@ -17,7 +18,19 @@ import {
   validateJobUrl
 } from "@/lib/applyExperience";
 import { createDefaultProfile } from "@/lib/profile";
-import { ApplicationSession, DetectedField } from "@/types";
+import { ApplicationSession, ApplyReadinessEnvironment, DetectedField } from "@/types";
+
+const readyEnvironment: ApplyReadinessEnvironment = {
+  browserAutomationAvailable: true,
+  browserAutomationDetail: "Chromium is installed locally and ready for controlled application sessions.",
+  localStorageWritable: true,
+  localStorageDetail: "ApplyPilot can write to its local data folder on this device.",
+  generatorHealth: {
+    status: "deterministic_fallback_only",
+    provider: "deterministic-template",
+    detail: "Using the built-in grounded template generator."
+  }
+};
 
 function makeField(overrides: Partial<DetectedField> = {}): DetectedField {
   return {
@@ -90,9 +103,17 @@ function renderApplyView(props: Partial<Parameters<typeof ApplyWorkspaceView>[0]
       mode: props.mode ?? "initial",
       hasResume: props.hasResume ?? true,
       resumeName: props.resumeName ?? "resume.pdf",
+      readinessReport:
+        props.readinessReport ??
+        buildApplyReadinessReport({
+          profile: createDefaultProfile(),
+          applicationUrl: props.url ?? "https://jobs.example.com/apply",
+          environment: readyEnvironment
+        }),
       url: props.url ?? "",
       error: props.error ?? null,
       disabled: props.disabled ?? false,
+      resumeBusy: props.resumeBusy ?? false,
       startLabel: props.startLabel ?? "Start application",
       session,
       progressItems: props.progressItems ?? getSessionProgress(session),
@@ -101,6 +122,7 @@ function renderApplyView(props: Partial<Parameters<typeof ApplyWorkspaceView>[0]
       recentSessions: props.recentSessions ?? [],
       sessionPanel: props.sessionPanel,
       onUrlChange: props.onUrlChange ?? (() => {}),
+      onResumeUpload: props.onResumeUpload ?? (() => {}),
       onStart: props.onStart ?? (() => {})
     })
   );
@@ -120,11 +142,17 @@ test("Apply shows a blocked missing-resume state until a resume exists", () => {
   const html = renderApplyView({
     mode: getApplyMode(null, false),
     hasResume: false,
+    readinessReport: buildApplyReadinessReport({
+      profile,
+      applicationUrl: "",
+      environment: readyEnvironment
+    }),
     startLabel: "Upload resume to start"
   });
 
   assert.match(html, /Add your resume before you start applying/i);
   assert.match(html, /Upload resume/i);
+  assert.match(html, /Resume required/i);
 });
 
 test("invalid application URLs are rejected before a session is created", () => {
@@ -161,12 +189,49 @@ test("review flow exposes editable suggested answers", () => {
       fields: [makeField({ suggestedValue: "A".repeat(160) })],
       onApprove: async () => {},
       onSkip: async () => {},
-      onSaveAnswer: async () => {}
+      onSaveAnswer: async () => {},
+      onReportWrongAnswer: async () => {}
     })
   );
 
   assert.match(html, /Suggested answer/i);
   assert.match(html, /textarea/i);
+});
+
+test("readiness marks missing optional details as recommended and browser issues as required", () => {
+  const profile = createDefaultProfile();
+  profile.identity.firstName = "Avery";
+  profile.identity.lastName = "Example";
+  profile.identity.email = "avery@example.com";
+  profile.identity.phone = "781-555-0101";
+  profile.phone = "781-555-0101";
+  profile.identity.city = "Boston";
+  profile.identity.stateProvince = "MA";
+  profile.resume.originalFilename = "resume.pdf";
+  profile.resume.storedPath = "/tmp/resume.pdf";
+  profile.resume.fileExists = true;
+
+  const recommended = buildApplyReadinessReport({
+    profile,
+    applicationUrl: "https://jobs.example.com/apply",
+    environment: readyEnvironment
+  });
+  assert.equal(recommended.canStart, true);
+  assert.equal(recommended.items.some((item) => item.label === "Experience or education recommended"), true);
+  assert.equal(recommended.items.some((item) => item.label === "Answer drafts recommended"), true);
+
+  const blocked = buildApplyReadinessReport({
+    profile,
+    applicationUrl: "not a url",
+    environment: {
+      ...readyEnvironment,
+      browserAutomationAvailable: false,
+      browserAutomationDetail: "Playwright Chromium is not available locally."
+    }
+  });
+  assert.equal(blocked.canStart, false);
+  assert.equal(blocked.items.some((item) => item.label === "Browser automation required"), true);
+  assert.equal(blocked.items.some((item) => item.label === "Application link required"), true);
 });
 
 test("ready state clearly tells the user to do the final review themselves", () => {
@@ -175,13 +240,23 @@ test("ready state clearly tells the user to do the final review themselves", () 
     statusMessage: "Ready for final review.",
     nextAction: "Review the page in the browser and submit on the job site when you are ready.",
     detectedFields: [makeField({ status: "filled", suggestedValue: "Avery", label: "First name", reason: "Matched exactly." })],
-    fieldsUnresolved: 0
+    fieldsUnresolved: 0,
+    preparationSummary: {
+      durationSeconds: 138,
+      fieldsCompleted: 1,
+      questionsAnsweredByUser: 0,
+      suggestedAnswersUsed: 1,
+      correctionsMade: 0,
+      retryCount: 0
+    }
   });
   const html = renderToStaticMarkup(createElement(ApplicationSessionPanel, { initialSession: readySession }));
 
   assert.match(html, /Ready for final review/i);
   assert.match(html, /Mark as submitted/i);
   assert.match(html, /ApplyPilot has done everything safe it can do on this page/i);
+  assert.match(html, /Dogfood summary/i);
+  assert.match(html, /Prepared in/i);
 });
 
 test("error and recovery states expose human recovery guidance", () => {
@@ -233,4 +308,11 @@ test("primary navigation remains keyboard-friendly and responsive", () => {
   assert.match(html, /aria-label="Primary"/i);
   assert.match(html, /focus-visible:ring-2/i);
   assert.match(html, /flex-wrap/i);
+});
+
+test("readiness panel keeps its narrow-window layout and keyboard-friendly disclosure", () => {
+  const html = renderApplyView();
+  assert.match(html, /View readiness details/i);
+  assert.match(html, /Readiness/i);
+  assert.match(html, /xl:grid-cols-\[minmax\(0,1fr\)_320px\]/i);
 });

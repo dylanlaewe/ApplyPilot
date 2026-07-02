@@ -6,7 +6,7 @@ import React from "react";
 
 import { ApplicationsWorkspace } from "@/components/ApplicationsWorkspace";
 import { applyUserFacingStatus, normalizeApplicationSession } from "@/lib/applicationsExperience";
-import { ApplicationSession, DetectedField } from "@/types";
+import { ApplicationSession, DetectedField, DogfoodReport } from "@/types";
 
 import { setupDom } from "./test-helpers";
 
@@ -98,6 +98,40 @@ function makeSession(overrides: Partial<ApplicationSession> = {}) {
   });
 }
 
+function makeDogfoodReport(overrides: Partial<DogfoodReport> = {}): DogfoodReport {
+  return {
+    generatedAt: "2026-07-02T14:00:00.000Z",
+    applicationsPrepared: 3,
+    medianPreparationTimeSeconds: 138,
+    averageAutomaticCompletionRate: 82.4,
+    averageUserInputFields: 2.3,
+    averageCorrections: 1,
+    retryCount: 2,
+    severeCorrections: 1,
+    applicationsByAts: [
+      { atsProvider: "greenhouse", count: 2 },
+      { atsProvider: "lever", count: 1 },
+      { atsProvider: "ashby", count: 0 },
+      { atsProvider: "workable", count: 0 },
+      { atsProvider: "workday", count: 0 },
+      { atsProvider: "generic", count: 0 }
+    ],
+    shortAnswersInserted: 4,
+    shortAnswersEdited: 1,
+    shortAnswersAcceptedUnchanged: 3,
+    finalStates: [
+      { status: "in_progress", count: 1 },
+      { status: "ready_to_review", count: 1 },
+      { status: "submitted", count: 1 },
+      { status: "interview", count: 0 },
+      { status: "offer", count: 0 },
+      { status: "rejected", count: 0 },
+      { status: "archived", count: 0 }
+    ],
+    ...overrides
+  };
+}
+
 function installSessionFetchMock(initialSessions: ApplicationSession[]) {
   let sessions = initialSessions.map((session) => normalizeApplicationSession(session));
   const calls: Array<{ url: string; method: string; body?: string }> = [];
@@ -186,7 +220,7 @@ afterEach(() => {
 
 test("applications shows a useful empty state", () => {
   const view = render(
-    <ApplicationsWorkspace initialSessions={[]} currentResume={{ filename: "", fileExists: false }} />
+    <ApplicationsWorkspace initialSessions={[]} currentResume={{ filename: "", fileExists: false }} initialDogfoodReport={makeDogfoodReport()} />
   );
 
   assert.match(view.container.textContent ?? "", /No applications yet/i);
@@ -229,6 +263,7 @@ test("application list supports rendering, search, filtering, sorting, missing r
     <ApplicationsWorkspace
       initialSessions={sessions}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 
@@ -243,6 +278,7 @@ test("application list supports rendering, search, filtering, sorting, missing r
     <ApplicationsWorkspace
       initialSessions={sessions}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 
@@ -281,6 +317,7 @@ test("applications supports status updates, submitted confirmation, notes saving
     <ApplicationsWorkspace
       initialSessions={mock.getSessions()}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 
@@ -328,6 +365,7 @@ test("applications supports archive and delete with accessible confirmation dial
         makeSession({ id: "session-2", company: "Beacon", applicationStatus: "submitted", status: "submitted", submittedAt: "2026-07-02T13:00:00.000Z" })
       ]}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 
@@ -362,6 +400,7 @@ test("insights shows counts, rates, and small-sample guidance", async () => {
         makeSession({ id: "session-3", applicationStatus: "offer", status: "offer", submittedAt: "2026-07-04T13:00:00.000Z" })
       ]}
       currentResume={{ filename: "resume.pdf", fileExists: true }}
+      initialDogfoodReport={makeDogfoodReport()}
     />
   );
 
@@ -369,6 +408,8 @@ test("insights shows counts, rates, and small-sample guidance", async () => {
   await waitFor(() => assert.match(view.container.textContent ?? "", /Response rate:/i));
   assert.match(view.container.textContent ?? "", /Based on a small sample/i);
   assert.match(view.container.textContent ?? "", /Applications by status/i);
+  assert.match(view.container.textContent ?? "", /Dogfood report/i);
+  assert.match(view.container.textContent ?? "", /Export JSON/i);
 });
 
 function screenListItems() {

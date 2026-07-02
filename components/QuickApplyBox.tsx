@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { ApplicationSessionPanel } from "@/components/ApplicationSessionPanel";
 import { ApplyWorkspaceView } from "@/components/ApplyWorkspaceView";
+import { buildApplyReadinessReport } from "@/lib/applyReadiness";
 import {
   getApplyMode,
   getResumeDisplayName,
@@ -13,10 +14,9 @@ import {
   getSessionProgress,
   getSessionStateTone,
   hasResumeOnFile,
-  shouldPollSession,
-  validateJobUrl
+  shouldPollSession
 } from "@/lib/applyExperience";
-import { ApplicantProfile, ApplicationSession } from "@/types";
+import { ApplicantProfile, ApplicationSession, ApplyReadinessEnvironment } from "@/types";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -33,29 +33,39 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 export function QuickApplyBox({
   profile,
   initialSession,
-  recentSessions
+  recentSessions,
+  readinessEnvironment
 }: {
   profile: ApplicantProfile;
   initialSession: ApplicationSession | null;
   recentSessions: ApplicationSession[];
+  readinessEnvironment: ApplyReadinessEnvironment;
 }) {
   const router = useRouter();
+  const [profileState, setProfileState] = useState(profile);
   const [url, setUrl] = useState(initialSession?.jobUrl ?? "");
   const [session, setSession] = useState<ApplicationSession | null>(initialSession);
   const [sessions, setSessions] = useState(recentSessions);
   const [error, setError] = useState<string | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
 
-  const hasResume = hasResumeOnFile(profile);
-  const resumeName = getResumeDisplayName(profile);
+  const hasResume = hasResumeOnFile(profileState);
+  const resumeName = getResumeDisplayName(profileState);
+  const readinessReport = buildApplyReadinessReport({
+    profile: profileState,
+    applicationUrl: url,
+    environment: readinessEnvironment
+  });
 
   useEffect(() => {
+    setProfileState(profile);
     setSession(initialSession);
     setSessions(recentSessions);
     if (initialSession?.jobUrl) {
       setUrl(initialSession.jobUrl);
     }
-  }, [initialSession, recentSessions]);
+  }, [initialSession, profile, recentSessions]);
 
   useEffect(() => {
     if (!session || !(isLaunching || shouldPollSession(session))) {
@@ -92,14 +102,8 @@ export function QuickApplyBox({
   const startApplication = async () => {
     setError(null);
 
-    if (!hasResume) {
-      setError("Upload your resume before starting a new application.");
-      return;
-    }
-
-    const validationError = validateJobUrl(url);
-    if (validationError) {
-      setError(validationError);
+    if (!readinessReport.canStart) {
+      setError(readinessReport.items.find((item) => item.blocking)?.detail ?? "Complete the required setup before starting another application.");
       return;
     }
 
@@ -144,6 +148,26 @@ export function QuickApplyBox({
     }
   };
 
+  const uploadResume = async (file: File) => {
+    setResumeBusy(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append("resume", file);
+
+    try {
+      const payload = await fetchJson<{ profile: ApplicantProfile }>("/api/profile/resume", {
+        method: "POST",
+        body: formData
+      });
+      setProfileState(payload.profile);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Could not upload resume.");
+    } finally {
+      setResumeBusy(false);
+    }
+  };
+
   const mode = getApplyMode(session, hasResume);
   const startLabel = !hasResume
     ? "Upload resume to start"
@@ -158,9 +182,11 @@ export function QuickApplyBox({
       mode={mode}
       hasResume={hasResume}
       resumeName={resumeName}
+      readinessReport={readinessReport}
       url={url}
       error={error}
-      disabled={isLaunching || !hasResume}
+      disabled={isLaunching || !readinessReport.canStart}
+      resumeBusy={resumeBusy}
       startLabel={startLabel}
       session={session}
       progressItems={getSessionProgress(session)}
@@ -169,6 +195,7 @@ export function QuickApplyBox({
       recentSessions={sessions}
       sessionPanel={session ? <ApplicationSessionPanel initialSession={session} /> : null}
       onUrlChange={setUrl}
+      onResumeUpload={uploadResume}
       onStart={() => void startApplication()}
     />
   );

@@ -788,7 +788,9 @@ export interface AuditLogEntry {
     | "session_saved"
     | "answer_saved"
     | "autofill_run_completed"
-    | "page_changed";
+    | "page_changed"
+    | "correction_reported"
+    | "correction_learned";
   message: string;
   reason?: string;
   timestamp: string;
@@ -834,6 +836,105 @@ export interface ApplicationPreparationSummary {
   suggestedAnswersUsed: number;
   correctionsMade: number;
   retryCount: number;
+}
+
+export type ApplyReadinessState = "ready" | "recommended" | "required";
+
+export interface ApplyReadinessItem {
+  id: string;
+  label: string;
+  detail: string;
+  state: ApplyReadinessState;
+  blocking: boolean;
+}
+
+export interface ApplyReadinessEnvironment {
+  browserAutomationAvailable: boolean;
+  browserAutomationDetail: string;
+  localStorageWritable: boolean;
+  localStorageDetail: string;
+  generatorHealth: {
+    status: ShortAnswerGeneratorHealthStatus;
+    provider: string;
+    detail: string;
+  };
+}
+
+export interface ApplyReadinessReport {
+  status: "ready" | "action_needed";
+  canStart: boolean;
+  requiredCount: number;
+  recommendedCount: number;
+  items: ApplyReadinessItem[];
+}
+
+export type CorrectionReportClassification =
+  | "profile_data_correction"
+  | "answer_memory_correction"
+  | "field_intent_mapping_issue"
+  | "option_matching_issue"
+  | "ats_control_issue"
+  | "generated_answer_issue"
+  | "one_time_job_specific_correction";
+
+export type CorrectionLearningTarget = "profile" | "saved_answer" | "regression";
+
+export interface CorrectionReport {
+  id: string;
+  sessionId: string;
+  fieldId: string;
+  company: string;
+  roleTitle: string;
+  atsProvider: ApplicationSession["atsProvider"];
+  visibleFieldQuestion: string;
+  enteredValue: string;
+  correctedValue: string;
+  note: string;
+  classification: CorrectionReportClassification;
+  learningApproved: boolean;
+  learningTargets: CorrectionLearningTarget[];
+  severe: boolean;
+  answerSource: AnswerSourceKind;
+  intent: FieldIntent;
+  controlType: ControlType;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DogfoodRegressionEntry {
+  id: string;
+  correctionReportId: string;
+  sessionId: string;
+  atsProvider: ApplicationSession["atsProvider"];
+  issueType: CorrectionReportClassification;
+  severity: "normal" | "severe";
+  fieldQuestion: string;
+  enteredValue: string;
+  correctedValue: string;
+  note: string;
+  createdAt: string;
+}
+
+export interface DogfoodReport {
+  generatedAt: string;
+  applicationsPrepared: number;
+  medianPreparationTimeSeconds: number | null;
+  averageAutomaticCompletionRate: number;
+  averageUserInputFields: number;
+  averageCorrections: number;
+  retryCount: number;
+  severeCorrections: number;
+  applicationsByAts: Array<{
+    atsProvider: ApplicationSession["atsProvider"];
+    count: number;
+  }>;
+  shortAnswersInserted: number;
+  shortAnswersEdited: number;
+  shortAnswersAcceptedUnchanged: number;
+  finalStates: Array<{
+    status: ApplicationDisplayStatus;
+    count: number;
+  }>;
 }
 
 export interface ApplicationSession {

@@ -320,6 +320,9 @@ export function SettingsWorkspace({
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
             Manage your default resume, review local-data controls, and keep help close by without surfacing technical clutter in the normal application flow.
           </p>
+          <span className="mt-4 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium uppercase tracking-[0.16em] text-slate-600">
+            Private alpha
+          </span>
         </div>
 
         <div className="flex items-center gap-3 self-start rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200/80 lg:self-auto">

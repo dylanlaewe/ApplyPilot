@@ -1,10 +1,12 @@
+"use client";
+
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, LoaderCircle, Sparkles } from "lucide-react";
-import React, { ReactNode } from "react";
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, LoaderCircle, Sparkles, Upload } from "lucide-react";
+import React, { ReactNode, useRef } from "react";
 
 import { StatusBadge } from "@/components/StatusBadge";
 import { buildSessionHeading } from "@/lib/jobMetadata";
-import { ApplicationSession } from "@/types";
+import { ApplicationSession, ApplyReadinessReport } from "@/types";
 
 type ProgressItem = {
   label: string;
@@ -25,6 +27,17 @@ function toneStyles(tone: "idle" | "active" | "review" | "ready" | "attention" |
       return "border-rose-200 bg-rose-50/80";
     default:
       return "border-slate-200 bg-white/92";
+  }
+}
+
+function readinessTone(state: "ready" | "recommended" | "required") {
+  switch (state) {
+    case "required":
+      return "border-rose-200 bg-rose-50 text-rose-900";
+    case "recommended":
+      return "border-amber-200 bg-amber-50 text-amber-900";
+    default:
+      return "border-emerald-200 bg-emerald-50 text-emerald-900";
   }
 }
 
@@ -69,13 +82,27 @@ function modeCopy(mode: "initial" | "missing_resume" | "active" | "needs_input" 
   }
 }
 
+function renderReadinessSummary(readinessReport: ApplyReadinessReport) {
+  if (readinessReport.requiredCount > 0) {
+    return `${readinessReport.requiredCount} required before starting`;
+  }
+
+  if (readinessReport.recommendedCount > 0) {
+    return `${readinessReport.recommendedCount} recommended before starting`;
+  }
+
+  return "Ready";
+}
+
 export function ApplyWorkspaceView({
   mode,
   hasResume,
   resumeName,
+  readinessReport,
   url,
   error,
   disabled,
+  resumeBusy,
   startLabel,
   session,
   progressItems,
@@ -84,14 +111,17 @@ export function ApplyWorkspaceView({
   recentSessions,
   sessionPanel,
   onUrlChange,
+  onResumeUpload,
   onStart
 }: {
   mode: "initial" | "missing_resume" | "active" | "needs_input" | "ready" | "recovery";
   hasResume: boolean;
   resumeName: string;
+  readinessReport: ApplyReadinessReport;
   url: string;
   error: string | null;
   disabled: boolean;
+  resumeBusy: boolean;
   startLabel: string;
   session: ApplicationSession | null;
   progressItems: ReadonlyArray<ProgressItem>;
@@ -100,10 +130,14 @@ export function ApplyWorkspaceView({
   recentSessions: ApplicationSession[];
   sessionPanel?: ReactNode;
   onUrlChange: (value: string) => void;
+  onResumeUpload: (file: File) => void;
   onStart: () => void;
 }) {
   const copy = modeCopy(mode);
   const recent = recentSessions.filter((entry) => entry.id !== session?.id).slice(0, 4);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const requiredItems = readinessReport.items.filter((item) => item.state === "required");
+  const recommendedItems = readinessReport.items.filter((item) => item.state === "recommended");
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -115,7 +149,7 @@ export function ApplyWorkspaceView({
             <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600">{copy.description}</p>
           </div>
 
-          <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-4 py-4 lg:min-w-[260px]">
+          <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-4 py-4 lg:min-w-[280px]">
             <p className="field-label">Resume</p>
             {hasResume ? (
               <>
@@ -124,18 +158,79 @@ export function ApplyWorkspaceView({
               </>
             ) : (
               <>
-                <p className="mt-2 text-sm font-medium text-slate-950">Missing</p>
-                <p className="mt-1 text-sm text-slate-600">Upload the resume you want ApplyPilot to use.</p>
+                <p className="mt-2 text-sm font-medium text-slate-950">Add a resume to start</p>
+                <p className="mt-1 text-sm text-slate-600">Upload the resume you want ApplyPilot to use. It stays local to this device.</p>
               </>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-              <Link href="/onboarding" className="secondary-button px-3 py-2 text-xs">
+              <button type="button" className="secondary-button px-3 py-2 text-xs" disabled={resumeBusy} onClick={() => fileInputRef.current?.click()}>
+                {resumeBusy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                 {hasResume ? "Replace resume" : "Upload resume"}
-              </Link>
+              </button>
               <Link href="/profile" className="secondary-button px-3 py-2 text-xs">
                 Edit profile
               </Link>
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.docx"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  onResumeUpload(file);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="field-label">Readiness</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.16em] ${
+                    readinessReport.requiredCount > 0
+                      ? "border-rose-200 bg-rose-50 text-rose-900"
+                      : readinessReport.recommendedCount > 0
+                        ? "border-amber-200 bg-amber-50 text-amber-900"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  }`}
+                >
+                  {renderReadinessSummary(readinessReport)}
+                </span>
+                <p className="text-sm text-slate-600">
+                  {readinessReport.canStart
+                    ? "You can start now. Recommended items simply improve coverage."
+                    : "Resolve the required items below before starting the next application."}
+                </p>
+              </div>
+            </div>
+
+            <details className="rounded-[20px] border border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-700 lg:w-[360px]">
+              <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-slate-950">
+                View readiness details
+                <ChevronDown className="h-4 w-4" />
+              </summary>
+              <div className="mt-4 space-y-3">
+                {requiredItems.map((item) => (
+                  <div key={item.id} className={`rounded-[18px] border px-3 py-3 ${readinessTone(item.state)}`}>
+                    <p className="text-sm font-medium">{item.label}</p>
+                    <p className="mt-1 text-sm">{item.detail}</p>
+                  </div>
+                ))}
+                {recommendedItems.map((item) => (
+                  <div key={item.id} className={`rounded-[18px] border px-3 py-3 ${readinessTone(item.state)}`}>
+                    <p className="text-sm font-medium">{item.label}</p>
+                    <p className="mt-1 text-sm">{item.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
         </div>
 
@@ -144,12 +239,12 @@ export function ApplyWorkspaceView({
             className="field-input h-14 flex-1 rounded-[22px] px-5 text-base"
             placeholder="Paste a job application link"
             value={url}
-            disabled={disabled}
+            disabled={resumeBusy}
             onChange={(event) => onUrlChange(event.target.value)}
             aria-label="Job application URL"
           />
           <button type="button" className="primary-button h-14 rounded-[22px] px-6 text-base" disabled={disabled} onClick={onStart}>
-            {disabled && hasResume ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}
+            {disabled && !resumeBusy ? <ArrowRight className="mr-2 h-4 w-4" /> : disabled ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}
             {startLabel}
           </button>
         </div>
@@ -262,9 +357,7 @@ export function ApplyWorkspaceView({
                   </Link>
                 ))
               ) : (
-                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50/60 px-4 py-4 text-sm text-slate-600">
-                  No applications started yet.
-                </div>
+                <p className="text-sm text-slate-600">Your recent applications will show up here after the first session starts.</p>
               )}
             </div>
           </section>

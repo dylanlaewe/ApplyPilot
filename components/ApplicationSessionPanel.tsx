@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { FilledFieldsSummary } from "@/components/FilledFieldsSummary";
 import { ReviewStepper } from "@/components/ReviewStepper";
+import { buildPreparationHeadline, formatPreparationDuration } from "@/lib/applicationsExperience";
 import { buildSessionHeading } from "@/lib/jobMetadata";
 import { ApplicationSession } from "@/types";
 
@@ -74,6 +75,7 @@ export function ApplicationSessionPanel({ initialSession }: { initialSession: Ap
   );
   const filledItems = useMemo(() => summarizeFilledItems(session), [session]);
   const primaryAction = getPrimaryAction(session);
+  const preparationSummary = session.preparationSummary;
 
   const runAction = async (action: string, task: () => Promise<{ session: ApplicationSession; message?: string }>) => {
     setBusyAction(action);
@@ -237,6 +239,16 @@ export function ApplicationSessionPanel({ initialSession }: { initialSession: Ap
               })
             )
           }
+          onReportWrongAnswer={(fieldId, correctedValue, note, learningApproved) =>
+            runAction(`correction-${fieldId}`, () =>
+              postJson(`/api/sessions/${session.id}/corrections`, {
+                fieldId,
+                correctedValue,
+                note,
+                learningApproved
+              })
+            )
+          }
         />
       ) : (
         <div className="rounded-[28px] border border-slate-200 bg-white/92 p-6 text-sm leading-7 text-slate-700 shadow-sm">
@@ -244,7 +256,62 @@ export function ApplicationSessionPanel({ initialSession }: { initialSession: Ap
         </div>
       )}
 
-      <FilledFieldsSummary fields={session.detectedFields} />
+      {preparationSummary ? (
+        <section className="rounded-[28px] border border-slate-200 bg-white/92 p-6 shadow-sm">
+          <p className="text-sm uppercase tracking-[0.18em] text-slate-500">Dogfood summary</p>
+          <h3 className="mt-2 font-display text-2xl font-semibold tracking-tight text-slate-950">
+            {buildPreparationHeadline(preparationSummary)}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {session.status === "ready_for_submission"
+              ? "Ready for browser review."
+              : session.status === "needs_review"
+                ? `${unresolvedCount} fields still need browser review.`
+                : `Current preparation time: ${formatPreparationDuration(preparationSummary.durationSeconds)}.`}
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Fields completed</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{preparationSummary.fieldsCompleted}</p>
+            </div>
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Suggested answers inserted</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{preparationSummary.suggestedAnswersUsed}</p>
+            </div>
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Details provided by you</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{preparationSummary.questionsAnsweredByUser}</p>
+            </div>
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Corrections made</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{preparationSummary.correctionsMade}</p>
+            </div>
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Retry count</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{preparationSummary.retryCount}</p>
+            </div>
+            <div className="rounded-[20px] bg-slate-50 px-4 py-4">
+              <p className="field-label">Still requiring review</p>
+              <p className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{unresolvedCount}</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <FilledFieldsSummary
+        fields={session.detectedFields}
+        disabled={busyAction !== null}
+        onReportWrongAnswer={(fieldId, correctedValue, note, learningApproved) =>
+          runAction(`filled-correction-${fieldId}`, () =>
+            postJson(`/api/sessions/${session.id}/corrections`, {
+              fieldId,
+              correctedValue,
+              note,
+              learningApproved
+            })
+          )
+        }
+      />
     </div>
   );
 }
