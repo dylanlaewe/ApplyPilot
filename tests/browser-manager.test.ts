@@ -31,6 +31,22 @@ test("browser manager reuses the same tab for the same session id", async () => 
   await resetBrowserManagerForTests();
 });
 
+test("browser manager can reuse an open page for a different session when requested", async () => {
+  await resetBrowserManagerForTests();
+
+  const firstPage = await getOrCreateSessionPage("session-one", { url: "data:text/html,<title>One</title><h1>One</h1>" });
+  const reusedPage = await getOrCreateSessionPage("session-two", {
+    url: "data:text/html,<title>Two</title><h1>Two</h1>",
+    reuseOpenPage: true
+  });
+
+  assert.equal(firstPage, reusedPage);
+  assert.equal(getOpenSessionCount(), 1);
+  assert.match(await reusedPage.title(), /Two/i);
+
+  await resetBrowserManagerForTests();
+});
+
 test("job metadata extraction prefers JSON-LD job posting metadata", async () => {
   await resetBrowserManagerForTests();
 

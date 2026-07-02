@@ -730,6 +730,14 @@ export function ApplicationsWorkspace({
                           <li>{selectedSession.preparationSummary?.correctionsMade ?? 0} corrections made</li>
                           <li>{selectedSession.preparationSummary?.retryCount ?? 0} retry count</li>
                         </ul>
+                        <div className="mt-4">
+                          <Link
+                            href={`/settings?session=${selectedSession.id}#advanced`}
+                            className="inline-flex items-center text-sm font-medium text-slate-700 underline-offset-4 hover:text-slate-950 hover:underline"
+                          >
+                            Troubleshoot this application
+                          </Link>
+                        </div>
                       </div>
 
                       <div className="space-y-4">
@@ -848,14 +856,6 @@ export function ApplicationsWorkspace({
                         </div>
                       </div>
 
-                      <details className="rounded-[24px] bg-slate-50 px-5 py-5">
-                        <summary className="cursor-pointer text-sm font-medium text-slate-900">Advanced diagnostics</summary>
-                        <div className="mt-4 space-y-2 text-sm text-slate-600">
-                          <p>ATS provider: {selectedSession.atsProvider}</p>
-                          <p>{selectedSession.currentPageNumber} page(s) visited</p>
-                          <p>{selectedSession.warnings.length} warning(s) recorded</p>
-                        </div>
-                      </details>
                     </div>
                   </div>
                 ) : (

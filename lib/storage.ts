@@ -1,12 +1,20 @@
 import { promises as fs } from "fs";
 import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+export const DATA_DIR = path.join(process.cwd(), "data");
 
 const writeQueues = new Map<string, Promise<void>>();
 
 export async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });
+}
+
+export function getDataDirPath() {
+  return DATA_DIR;
+}
+
+export function getStorageFilePath(fileName: string) {
+  return path.join(DATA_DIR, fileName);
 }
 
 async function ensureFile(filePath: string, initialData: unknown) {

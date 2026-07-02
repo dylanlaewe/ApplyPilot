@@ -92,12 +92,14 @@ export async function launchBrowserSession(
   sessionId: string,
   options: {
     navigate?: boolean;
+    reuseOpenPage?: boolean;
   } = {}
 ) {
   const context = await getOrCreateBrowserContext();
   const page = await getOrCreateSessionPage(sessionId, {
     url,
-    navigate: options.navigate
+    navigate: options.navigate,
+    reuseOpenPage: options.reuseOpenPage
   });
   await installSubmissionGuard(page);
   await focusSessionPage(sessionId);

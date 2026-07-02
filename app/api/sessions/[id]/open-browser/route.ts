@@ -5,6 +5,7 @@ import { createAuditEntry } from "@/lib/auditLog";
 import { detectAtsProvider, launchBrowserSession, summarizePageWarnings, waitForPageReadiness } from "@/lib/playwrightSession";
 import { extractJobMetadata } from "@/lib/jobMetadata";
 import { humanizeError } from "@/lib/safety";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 
@@ -17,8 +18,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   }
 
   try {
+    const settings = await getSettings();
     const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, id, {
-      navigate: false
+      navigate: false,
+      reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow
     });
     await waitForPageReadiness(runtime.page);
     const pageSummary = await summarizePageWarnings(runtime.page);
