@@ -273,12 +273,15 @@ export function SettingsWorkspace({
 
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `applypilot-local-data-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const isJsdom = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent || "");
+      if (!isJsdom) {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = `applypilot-local-data-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
       URL.revokeObjectURL(objectUrl);
       setMessage("Local data export downloaded.");
     } catch (error) {
