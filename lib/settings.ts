@@ -4,6 +4,11 @@ export interface ApplyPilotSettings {
   applicationBehavior: {
     reuseBrowserWindow: boolean;
   };
+  diagnostics: {
+    workday: {
+      enabledSessionId: string;
+    };
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -16,6 +21,11 @@ export function createDefaultSettings(): ApplyPilotSettings {
     applicationBehavior: {
       reuseBrowserWindow: true
     },
+    diagnostics: {
+      workday: {
+        enabledSessionId: ""
+      }
+    },
     createdAt: now,
     updatedAt: now
   };
@@ -27,6 +37,11 @@ export function normalizeSettings(value: Partial<ApplyPilotSettings> | null | un
   return {
     applicationBehavior: {
       reuseBrowserWindow: value?.applicationBehavior?.reuseBrowserWindow ?? base.applicationBehavior.reuseBrowserWindow
+    },
+    diagnostics: {
+      workday: {
+        enabledSessionId: value?.diagnostics?.workday?.enabledSessionId ?? base.diagnostics.workday.enabledSessionId
+      }
     },
     createdAt: value?.createdAt || base.createdAt,
     updatedAt: value?.updatedAt || base.updatedAt
@@ -46,6 +61,14 @@ export async function saveSettings(partial: Partial<ApplyPilotSettings>) {
     applicationBehavior: {
       ...current.applicationBehavior,
       ...partial.applicationBehavior
+    },
+    diagnostics: {
+      ...current.diagnostics,
+      ...partial.diagnostics,
+      workday: {
+        ...current.diagnostics.workday,
+        ...partial.diagnostics?.workday
+      }
     },
     updatedAt: new Date().toISOString()
   });

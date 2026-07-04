@@ -768,6 +768,10 @@ export interface DetectedField {
   autocomplete?: string;
   accept?: string;
   role?: string;
+  sectionLabel?: string;
+  sectionKind?: "education" | "experience" | "certifications" | "languages" | "other";
+  entryIndex?: number;
+  controlTop?: number;
   shortAnswer?: ShortAnswerSuggestion | null;
 }
 
@@ -998,6 +1002,16 @@ export interface ApplicationSession {
     userCorrections: number;
     manualAnswers: number;
     autofillRetries: number;
+    fillPassCount?: number;
+    scrollCount?: number;
+    focusChangeCount?: number;
+    duplicateAttemptCount?: number;
+    rescanCount?: number;
+    automaticPageTransitions?: number;
+    dropdownOpenAttempts?: number;
+    fieldsVerifiedAtLastPass?: number;
+    fieldsStalledAtLastPass?: number;
+    fieldsSkippedAtLastPass?: number;
   };
 }
 
@@ -1046,6 +1060,10 @@ export interface RawScannedField {
   groupKey?: string;
   groupLabel?: string;
   labelSource?: string;
+  sectionLabel?: string;
+  sectionKind?: "education" | "experience" | "certifications" | "languages" | "other";
+  entryIndex?: number;
+  controlTop?: number;
 }
 
 export interface ProfileCompletenessBreakdown {

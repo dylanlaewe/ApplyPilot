@@ -57,9 +57,47 @@ const CLEARANCE_STATUS_ALIASES: Record<ClearanceStatus, string[]> = {
 };
 
 const EEOC_VETERAN_ALIASES: Record<string, string[]> = {
-  "not a protected veteran": ["not a veteran", "i am not a veteran", "not protected veteran", "no veteran status"],
-  "protected veteran": ["protected veteran", "i am a veteran", "veteran"],
+  "not a veteran": ["i am not a veteran", "not a veteran"],
+  "not a protected veteran": ["i am not a veteran", "not a veteran", "not a protected veteran"],
+  "veteran, not protected": [
+    "identify as a veteran, just not a protected veteran",
+    "veteran just not a protected veteran",
+    "veteran but not a protected veteran"
+  ],
+  "protected veteran": [
+    "identify as one or more of the classifications of protected veterans",
+    "protected veteran",
+    "i am a protected veteran"
+  ],
   "prefer not to answer": ["decline to self-identify", "prefer not to answer", "decline", "choose not to disclose"]
+};
+
+const FIELD_OF_STUDY_ALIASES: Record<string, string[]> = {
+  "computer science": [
+    "computer science",
+    "computer sciences",
+    "computer and information science",
+    "computer and information sciences",
+    "computer and information sciences general",
+    "computer information systems"
+  ],
+  "information technology": ["information technology", "information systems", "information science"],
+  cybersecurity: ["cybersecurity", "information assurance", "cyber security"],
+  "data science": ["data science", "data analytics", "analytics"],
+  mathematics: ["mathematics", "applied mathematics", "math"]
+};
+
+const DEGREE_OPTION_ALIASES: Record<string, string[]> = {
+  "bachelor of science": ["bachelor of science", "bachelors degree", "bachelor's degree", "undergraduate degree"],
+  "bachelor of arts": ["bachelor of arts", "bachelors degree", "bachelor's degree", "undergraduate degree"],
+  "master of science": ["master of science", "masters degree", "master's degree", "graduate degree"],
+  "master of arts": ["master of arts", "masters degree", "master's degree", "graduate degree"],
+  "associate degree": ["associate degree", "associate"],
+  "associate of science": ["associate of science", "associate degree", "associate"],
+  "associate of arts": ["associate of arts", "associate degree", "associate"],
+  "doctor of philosophy": ["doctor of philosophy", "doctoral degree", "doctorate", "phd"],
+  "juris doctor": ["juris doctor", "professional degree"],
+  "doctor of medicine": ["doctor of medicine", "professional degree"]
 };
 
 const EDUCATION_LEVEL_ALIASES: Record<HighestEducationLevel, string[]> = {
@@ -317,6 +355,17 @@ export function matchTextOption(options: string[], candidate: string, reason = "
   return best;
 }
 
+function exactTextMatch(options: string[], candidates: string[], reason: string) {
+  const normalizedCandidates = candidates.map((candidate) => normalizeText(candidate)).filter(Boolean);
+  for (const option of options) {
+    const normalizedOption = normalizeText(option);
+    if (normalizedCandidates.some((candidate) => normalizedOption === candidate)) {
+      return { option, confidence: 0.99, reason };
+    }
+  }
+  return null;
+}
+
 export function matchStateOrCountryOption(options: string[], value: string) {
   const normalizedValue = normalizeText(value);
   const state = US_STATE_OPTIONS.find(
@@ -337,17 +386,51 @@ export function matchEeocVeteranOption(options: string[], value: string) {
   const normalizedValue = normalizeText(value);
   const exactAliases = EEOC_VETERAN_ALIASES[normalizedValue];
   if (exactAliases) {
-    for (const option of options) {
-      const normalizedOption = normalizeText(option);
-      if (exactAliases.some((alias) => normalizedOption === normalizeText(alias) || normalizedOption.includes(normalizeText(alias)))) {
-        return {
-          option,
-          confidence: 0.96,
-          reason: "Matched veteran-status wording."
-        };
-      }
+    return exactTextMatch(options, exactAliases, "Matched veteran-status wording.");
+  }
+
+  return exactTextMatch(options, [value], "Matched veteran-status wording.");
+}
+
+export function matchFieldOfStudyOption(options: string[], value: string) {
+  const normalizedValue = normalizeText(value);
+  const aliases = FIELD_OF_STUDY_ALIASES[normalizedValue] ?? [value];
+  const exact = exactTextMatch(options, aliases, "Matched field-of-study taxonomy.");
+  if (exact) return exact;
+
+  for (const option of options) {
+    const normalizedOption = normalizeText(option);
+    if (
+      normalizedValue === "computer science" &&
+      /computer/.test(normalizedOption) &&
+      /(science|sciences|information)/.test(normalizedOption)
+    ) {
+      return {
+        option,
+        confidence: 0.94,
+        reason: "Matched field-of-study taxonomy."
+      };
     }
   }
 
-  return matchTextOption(options, value, "Matched veteran-status wording.");
+  return null;
+}
+
+export function matchEducationDegreeOption(options: string[], value: string) {
+  const normalizedValue = normalizeText(value);
+  const aliases = DEGREE_OPTION_ALIASES[normalizedValue] ?? [value];
+  const exact = exactTextMatch(options, aliases, "Matched degree taxonomy.");
+  if (exact) return exact;
+
+  if (/bachelor/.test(normalizedValue)) {
+    return exactTextMatch(options, ["bachelors degree", "bachelor's degree"], "Matched degree taxonomy.");
+  }
+  if (/master/.test(normalizedValue)) {
+    return exactTextMatch(options, ["masters degree", "master's degree"], "Matched degree taxonomy.");
+  }
+  if (/associate/.test(normalizedValue)) {
+    return exactTextMatch(options, ["associate degree", "associate"], "Matched degree taxonomy.");
+  }
+
+  return null;
 }

@@ -50,14 +50,18 @@ function getPrimaryAction(session: ApplicationSession) {
     key: "autofill",
     label:
       session.status === "waiting_for_user"
-        ? "Try this page again"
+        ? "Fill this page"
         : session.status === "failed"
           ? "Try again"
           : session.status === "ready_for_submission"
             ? "Check this page again"
-            : "Continue on this page",
+            : "Fill this page",
     task: () => postJson(`/api/sessions/${session.id}/autofill`)
   };
+}
+
+function isWorkdaySession(session: ApplicationSession) {
+  return session.atsProvider === "workday" || /workday/i.test(session.currentPageUrl || session.jobUrl);
 }
 
 export function ApplicationSessionPanel({ initialSession }: { initialSession: ApplicationSession }) {
@@ -137,6 +141,16 @@ export function ApplicationSessionPanel({ initialSession }: { initialSession: Ap
                     onClick={() => runAction("captcha-override", () => postJson(`/api/sessions/${session.id}/captcha`, { action: "override" }))}
                   >
                     Continue once without waiting
+                  </button>
+                ) : null}
+                {isWorkdaySession(session) ? (
+                  <button
+                    type="button"
+                    className="secondary-button w-full justify-start"
+                    disabled={busyAction !== null}
+                    onClick={() => runAction("workday-diagnostics", () => postJson(`/api/sessions/${session.id}/workday-diagnostics`, { enabled: true }))}
+                  >
+                    Enable Workday diagnostics
                   </button>
                 ) : null}
                 <button
@@ -252,7 +266,7 @@ export function ApplicationSessionPanel({ initialSession }: { initialSession: Ap
         />
       ) : (
         <div className="rounded-[28px] border border-slate-200 bg-white/92 p-6 text-sm leading-7 text-slate-700 shadow-sm">
-          ApplyPilot has not found a fillable form on this page yet. If the site needs login, consent, or an extra click before the form appears, do that in the browser window first and then continue here.
+          ApplyPilot has not found a fillable form on this page yet. If the site needs login, consent, or an extra click before the form appears, do that in the browser window first. Once the next form page settles, ApplyPilot should continue automatically, and you can still use Fill this page as a recovery step.
         </div>
       )}
 

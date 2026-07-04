@@ -2,10 +2,12 @@ import type { Browser, BrowserContext, Frame, Page } from "playwright";
 
 import { FINAL_SUBMIT_PATTERNS } from "@/lib/autofillRules";
 import { verifyFilledValue } from "@/lib/answerVerification";
+import { installBrowserOverlay } from "@/lib/browserOverlay";
 import { evaluateVisibleFieldCandidates } from "@/lib/browserFieldScanner";
 import { focusSessionPage, getOrCreateBrowserContext, getOrCreateSessionPage, getSessionPage } from "@/lib/browserManager";
-import { fillAutocompleteControl, fillCustomCombobox, fillNativeSelect, fillWorkdaySelect } from "@/lib/controlAdapters";
+import { fillAutocompleteControl, fillCustomCombobox, fillNativeSelect, fillWorkdaySelect, type FillInteractionTelemetry } from "@/lib/controlAdapters";
 import { prepareLogicalFields } from "@/lib/fieldLabeling";
+import { installPageActivityMonitor, waitForPageReadiness as waitForStablePage } from "@/lib/pageReadiness";
 import { matchBooleanOption, matchTextOption } from "@/lib/optionMatcher";
 import { isFinalSubmitLabel } from "@/lib/safety";
 import { normalizeText } from "@/lib/utils";
@@ -102,6 +104,8 @@ export async function launchBrowserSession(
     reuseOpenPage: options.reuseOpenPage
   });
   await installSubmissionGuard(page);
+  await installPageActivityMonitor(page);
+  await installBrowserOverlay(page);
   await focusSessionPage(sessionId);
 
   return { browser: context.browser() as Browser, context, page, sessionId };
@@ -313,9 +317,7 @@ export async function scanVisibleFields(page: Page): Promise<RawScannedField[]> 
 }
 
 export async function waitForPageReadiness(page: Page) {
-  await page.waitForLoadState("domcontentloaded", { timeout: 45_000 }).catch(() => undefined);
-  await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
-  await page.waitForTimeout(400);
+  await waitForStablePage(page);
 }
 
 function resolveFrame(page: Page, field: Pick<DetectedField, "frameUrl" | "frameName">): Frame {
@@ -389,7 +391,7 @@ async function highlightField(frame: Frame, selector: string) {
 }
 
 export async function handleSelectDropdown(frame: Frame, selector: string, value: string) {
-  await fillNativeSelect(frame, selector, value);
+  return fillNativeSelect(frame, selector, value);
 }
 
 export async function handleRadioGroup(frame: Frame, field: DetectedField, value: string) {
@@ -416,7 +418,7 @@ export async function handleRadioGroup(frame: Frame, field: DetectedField, value
 
       if (optionValue === normalizedTarget || optionLabel === normalizedTarget || optionLabel.includes(normalizedTarget) || optionValue.includes(normalizedTarget)) {
         await option.check();
-        return;
+        return optionLabel || optionValue || value;
       }
     }
   }
@@ -454,7 +456,7 @@ export async function handleRadioGroup(frame: Frame, field: DetectedField, value
     const optionLabel = normalizeText(option.label);
     if (optionValue === normalizedTarget || optionLabel === normalizedTarget || optionLabel.includes(normalizedTarget) || optionValue.includes(normalizedTarget)) {
       await frame.locator(option.selector).first().click({ timeout: 10_000, force: true });
-      return;
+      return option.label || option.value || value;
     }
   }
 
@@ -470,6 +472,7 @@ export async function handleCheckbox(frame: Frame, selector: string, value: stri
   } else {
     await locator.uncheck();
   }
+  return shouldCheck ? "checked" : "unchecked";
 }
 
 export async function handleCheckboxGroup(frame: Frame, field: DetectedField, value: string) {
@@ -532,40 +535,92 @@ export async function handleCheckboxGroup(frame: Frame, field: DetectedField, va
       await locator.uncheck().catch(() => undefined);
     }
   }
+  return matchedLabels.join(", ");
 }
 
-export async function handleFileUpload(frame: Frame, selector: string, filePath: string) {
-  await frame.locator(selector).setInputFiles(filePath);
+async function resolveFileUploadLocator(frame: Frame, field: DetectedField) {
+  const primary = frame.locator(field.selector).first();
+  if ((await primary.count().catch(() => 0)) > 0) {
+    return primary;
+  }
+
+  const candidate = frame.locator('input[type="file"]').first();
+  if ((await candidate.count().catch(() => 0)) > 0) {
+    return candidate;
+  }
+
+  return primary;
 }
 
-async function fillTextControl(frame: Frame, selector: string, value: string) {
+export async function handleFileUpload(frame: Frame, field: DetectedField, filePath: string) {
+  const locator = await resolveFileUploadLocator(frame, field);
+  await locator.setInputFiles(filePath);
+  const expectedFileName = filePath.split("/").pop() || filePath.split("\\").pop() || filePath;
+
+  await frame
+    .waitForFunction(
+      ({ selector, expected }) => {
+        const target = document.querySelector(selector) as HTMLInputElement | null;
+        const bodyText = (document.body.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const inputName = target?.files?.[0]?.name?.toLowerCase() || target?.value?.toLowerCase() || "";
+        return inputName.includes(expected) || bodyText.includes(expected);
+      },
+      { selector: field.selector, expected: expectedFileName.toLowerCase() },
+      { timeout: 4_000 }
+    )
+    .catch(() => undefined);
+
+  return expectedFileName;
+}
+
+async function fillTextControl(frame: Frame, selector: string, value: string, telemetry?: FillInteractionTelemetry) {
   const locator = frame.locator(selector).first();
   try {
-    await locator.click({ timeout: 10_000 });
-    await locator.fill(value);
+    await locator.evaluate((element, nextValue) => {
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+        throw new Error("The text field could not be updated directly.");
+      }
+
+      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+      descriptor?.set?.call(element, nextValue);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      element.dispatchEvent(new Event("blur", { bubbles: true }));
+    }, value);
     return;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!/intercepts pointer events|subtree intercepts pointer events/i.test(message)) {
-      throw error;
+    if (/intercepts pointer events|subtree intercepts pointer events/i.test(message)) {
+      telemetry && (telemetry.focusChangeCount += 1);
+      await locator.evaluate((element, nextValue) => {
+        if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+          throw new Error("The text field could not be focused for input.");
+        }
+
+        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+        descriptor?.set?.call(element, nextValue);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        element.focus();
+      }, value);
+      return;
     }
+    try {
+      telemetry && (telemetry.focusChangeCount += 1);
+      await locator.fill(value);
+      return;
+    } catch {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+    }
+    throw error;
   }
-
-  await locator.evaluate((element, nextValue) => {
-    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
-      throw new Error("The text field could not be focused for input.");
-    }
-
-    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-    descriptor?.set?.call(element, nextValue);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-    element.focus();
-  }, value);
 }
 
-export async function fillField(page: Page, field: DetectedField, value: string) {
+export async function fillField(page: Page, field: DetectedField, value: string, telemetry?: FillInteractionTelemetry) {
   if (!value.trim()) {
     throw new Error("No value provided for this field.");
   }
@@ -586,36 +641,37 @@ export async function fillField(page: Page, field: DetectedField, value: string)
 
   const performFill = async () => {
     if (field.type === "select-one" || field.type === "select-multiple" || field.controlType === "native_select") {
-      await handleSelectDropdown(frame, field.selector, value);
+      return handleSelectDropdown(frame, field.selector, value);
     } else if (field.type === "radio") {
-      await handleRadioGroup(frame, field, value);
+      return handleRadioGroup(frame, field, value);
     } else if (field.type === "checkbox") {
       if ((field.selectOptions?.length ?? 0) > 1 && field.name) {
-        await handleCheckboxGroup(frame, field, value);
+        return handleCheckboxGroup(frame, field, value);
       } else {
-        await handleCheckbox(frame, field.selector, value);
+        return handleCheckbox(frame, field.selector, value);
       }
     } else if (field.type === "file") {
-      await handleFileUpload(frame, field.selector, value);
+      return handleFileUpload(frame, field, value);
     } else if (field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.role === "combobox") {
-      await fillAutocompleteControl(frame, field, value);
+      return fillAutocompleteControl(frame, field, value, telemetry);
     } else if (field.controlType === "listbox" || field.controlType === "custom_select" || field.controlType === "menu_button") {
       if (field.frameUrl?.includes("workday") || field.frameName?.toLowerCase().includes("workday")) {
-        await fillWorkdaySelect(frame, field, value);
+        return fillWorkdaySelect(frame, field, value, telemetry);
       } else {
-        await fillCustomCombobox(frame, field, value);
+        return fillCustomCombobox(frame, field, value, telemetry);
       }
     } else {
-      await fillTextControl(frame, field.selector, value);
+      await fillTextControl(frame, field.selector, value, telemetry);
+      return value;
     }
   };
 
-  await performFill();
-  let verification = await verifyFilledValue(frame, field, value);
+  const expectedValue = (await performFill()) || value;
+  let verification = await verifyFilledValue(frame, field, expectedValue);
 
   if (!verification.success && (field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.controlType === "listbox" || field.controlType === "custom_select" || field.controlType === "menu_button")) {
-    await performFill();
-    verification = await verifyFilledValue(frame, field, value);
+    const retryValue = (await performFill()) || expectedValue;
+    verification = await verifyFilledValue(frame, field, retryValue);
   }
 
   if (!verification.success) {

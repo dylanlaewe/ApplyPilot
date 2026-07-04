@@ -14,9 +14,13 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
   const cleanText = (value) => (value ?? "").replace(/\s+/g, " ").trim();
   const FIELD_CONTAINER_SELECTORS = [
     "fieldset",
+    "section",
     "[role='radiogroup']",
     "[role='group']",
     "[data-automation-id='formField']",
+    "[data-automation-id='formSection']",
+    "[data-automation-id='panelSet']",
+    "[data-automation-id='panelContent']",
     ".application-question",
     ".form-field",
     ".form-group",
@@ -43,6 +47,18 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     "[contenteditable='true']"
   ].join(", ");
   const FIELD_BOUNDARY_SELECTORS = [FIELD_CONTAINER_SELECTORS, FIELD_CONTROL_SELECTORS].join(", ");
+  const SECTION_HEADING_SELECTORS = [
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "legend",
+    "[data-automation-id='formSectionHeading']",
+    "[data-automation-id='panelHeader']",
+    "[data-automation-id='sectionHeader']",
+    ".section-header",
+    ".section-title"
+  ].join(", ");
 
   const isVisibleElement = (element) => {
     if (!(element instanceof HTMLElement)) return false;
@@ -50,6 +66,17 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     const style = window.getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0;
+  };
+
+  const isAssociatedHiddenFileInput = (element) => {
+    if (!(element instanceof HTMLInputElement) || element.type !== "file") return false;
+    const labelText = cleanText(resolveExplicitLabel(element) || resolveAriaLabelledBy(element) || element.getAttribute("aria-label") || "");
+    const container =
+      element.closest("[data-automation-id='formField'], [data-automation-id='formSection'], .application-question, .form-field, .form-group, .field-wrapper") ??
+      element.parentElement;
+    if (!container || !isVisibleElement(container)) return false;
+    const containerText = cleanText(container.textContent || "");
+    return /resume|curriculum vitae|\bcv\b|cover letter|attachment|upload/i.test([labelText, containerText].join(" "));
   };
 
   const normalizeFragment = (value) =>
@@ -119,6 +146,43 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     const next = frameInfo.prefix + "_group_" + index;
     container.setAttribute(frameInfo.groupAttribute, next);
     return next;
+  };
+
+  const resolveSectionMetadata = (element) => {
+    const section =
+      element.closest("[data-automation-id='formSection'], section, [data-automation-id='panelSet'], [data-automation-id='panelContent']") ??
+      element.closest("fieldset, [role='group'], [role='radiogroup']");
+    if (!section) {
+      return { sectionLabel: "", sectionKind: "other", entryIndex: 0 };
+    }
+
+    const sectionHeading = cleanText(section.querySelector(SECTION_HEADING_SELECTORS)?.textContent || "");
+    const normalizedHeading = sectionHeading.toLowerCase();
+    let sectionKind = "other";
+    if (/education/.test(normalizedHeading)) sectionKind = "education";
+    else if (/experience|employment|work history|work experience/.test(normalizedHeading)) sectionKind = "experience";
+    else if (/certification|license/.test(normalizedHeading)) sectionKind = "certifications";
+    else if (/language/.test(normalizedHeading)) sectionKind = "languages";
+
+    const entryContainer =
+      element.closest("[data-applypilot-repeatable-entry]") ??
+      element.closest("[data-automation-id='repeatableSectionItem'], [data-automation-id='education'], [data-automation-id='workExperience'], [data-automation-id='certification'], .repeatable-entry");
+
+    if (!entryContainer || !entryContainer.parentElement) {
+      return { sectionLabel: sectionHeading, sectionKind, entryIndex: 0 };
+    }
+
+    const siblings = Array.from(entryContainer.parentElement.children).filter((candidate) => {
+      if (!(candidate instanceof HTMLElement)) return false;
+      const text = cleanText(candidate.textContent || "").toLowerCase();
+      return (
+        candidate.matches("[data-applypilot-repeatable-entry], [data-automation-id='repeatableSectionItem'], [data-automation-id='education'], [data-automation-id='workExperience'], [data-automation-id='certification'], .repeatable-entry") ||
+        (/school|degree|field of study|employer|job title|start date|end date/.test(text) && candidate.querySelector(FIELD_CONTROL_SELECTORS))
+      );
+    });
+    const entryIndex = Math.max(0, siblings.indexOf(entryContainer));
+
+    return { sectionLabel: sectionHeading, sectionKind, entryIndex };
   };
 
   const resolveExplicitLabel = (element) => {
@@ -290,13 +354,13 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
   const results = [];
 
   for (let index = 0; index < controls.length; index += 1) {
-    const element = controls[index];
+      const element = controls[index];
 
-    try {
-      if (!(element instanceof HTMLElement)) continue;
-      if (element instanceof HTMLInputElement && element.type === "hidden") continue;
+      try {
+        if (!(element instanceof HTMLElement)) continue;
+        if (element instanceof HTMLInputElement && element.type === "hidden" && !isAssociatedHiddenFileInput(element)) continue;
 
-      if (!isVisibleElement(element)) continue;
+      if (!isVisibleElement(element) && !isAssociatedHiddenFileInput(element)) continue;
 
       const selectorId = frameInfo.prefix + "_" + index;
       element.setAttribute(frameInfo.selectorAttribute, selectorId);
@@ -310,6 +374,8 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
       const questionContainerText = extractLocalQuestionContext(element, owningContainer);
       const optionLabel = resolveOptionLabel(element);
       const groupKey = ensureGroupId(element, index);
+      const sectionMetadata = resolveSectionMetadata(element);
+      const rect = element.getBoundingClientRect();
 
       const isBooleanControl =
         (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) || role === "checkbox" || role === "radio";
@@ -335,6 +401,11 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
 
       const parent = owningContainer ?? element.parentElement;
       const nearbyText = validateExtractedQuestion(questionContainerText, nearestVisibleLabel || explicitLabel || ariaLabelledByText);
+      const insideFormContext = Boolean(
+        element.closest(
+          "form, [data-automation-id='applicationForm'], [data-automation-id='formField'], [data-automation-id='formSection'], fieldset, [role='group'], [role='radiogroup']"
+        )
+      );
 
       let controlType = "custom_select";
       if (element instanceof HTMLTextAreaElement) {
@@ -359,6 +430,14 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         controlType = "menu_button";
       } else if (element.getAttribute("contenteditable") === "true") {
         controlType = "text";
+      }
+
+      if ((controlType === "menu_button" || controlType === "custom_select" || controlType === "listbox") && !insideFormContext) {
+        continue;
+      }
+
+      if (/(accountsettingsbutton|settingsselectorbutton)/i.test([explicitLabel, ariaLabelledByText, nearbyText, optionLabel].join(" "))) {
+        continue;
       }
 
       let elementType = "text";
@@ -399,7 +478,7 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         frameUrl: frameInfo.url,
         frameName: frameInfo.name,
         isRequired: element.hasAttribute("required") || element.getAttribute("aria-required") === "true",
-        isVisible: true,
+        isVisible: isVisibleElement(element) || isAssociatedHiddenFileInput(element),
         isDisabled:
           (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) &&
           element.disabled,
@@ -411,7 +490,11 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         questionContainerText,
         optionLabel,
         groupKey,
-        groupLabel: legendText || questionContainerText || nearestVisibleLabel
+        groupLabel: legendText || questionContainerText || nearestVisibleLabel,
+        sectionLabel: sectionMetadata.sectionLabel,
+        sectionKind: sectionMetadata.sectionKind,
+        entryIndex: sectionMetadata.entryIndex,
+        controlTop: Math.round(rect.top + window.scrollY)
       });
     } catch {}
   }

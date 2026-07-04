@@ -88,3 +88,23 @@ export function hydrateAlreadySatisfiedFields(fields: DetectedField[]) {
 
   return fields;
 }
+
+function mergeKey(field: Pick<DetectedField, "intent" | "label" | "name" | "domId" | "sectionLabel" | "entryIndex">) {
+  return [
+    field.intent,
+    normalizeText(field.label),
+    normalizeText(field.name),
+    normalizeText(field.domId),
+    normalizeText(field.sectionLabel || ""),
+    String(field.entryIndex ?? 0)
+  ].join("::");
+}
+
+export function mergeDetectedFieldAttempts(previousFields: DetectedField[], nextFields: DetectedField[]) {
+  const previousByKey = new Map(previousFields.map((field) => [mergeKey(field), field]));
+
+  return nextFields.map((field) => {
+    const previous = previousByKey.get(mergeKey(field));
+    return previous ? preferDetectedFieldAttempt(previous, field) : field;
+  });
+}

@@ -125,6 +125,10 @@ export function suggestFieldValue(
     autocomplete: rawField.autocomplete,
     accept: rawField.accept,
     role: rawField.role,
+    sectionLabel: rawField.sectionLabel,
+    sectionKind: rawField.sectionKind,
+    entryIndex: rawField.entryIndex,
+    controlTop: rawField.controlTop,
     shortAnswer: answer.shortAnswer ?? null
   };
 }

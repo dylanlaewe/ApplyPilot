@@ -7,8 +7,10 @@ import { buildShortAnswerSuggestion } from "@/lib/shortAnswerGenerator";
 import {
   matchAvailabilityOption,
   matchBooleanOption,
+  matchEducationDegreeOption,
   matchEducationLevel,
   matchEeocVeteranOption,
+  matchFieldOfStudyOption,
   matchSecurityClearanceLevel,
   matchSecurityClearanceStatus,
   matchSalaryOption,
@@ -85,6 +87,14 @@ function maybeMatchVisibleOption(intent: FieldIntent, field: RawScannedField, ca
       options,
       candidate as Exclude<ApplicantProfile["knowledgeProfile"]["education"]["highestEducationLevel"], "">
     );
+  }
+
+  if (intent === "education_degree") {
+    return matchEducationDegreeOption(options, candidate) ?? matchTextOption(options, candidate, "Matched degree option.");
+  }
+
+  if (intent === "education_major") {
+    return matchFieldOfStudyOption(options, candidate) ?? matchTextOption(options, candidate, "Matched field-of-study option.");
   }
 
   if (intent === "availability") {

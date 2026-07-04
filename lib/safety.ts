@@ -1,4 +1,4 @@
-import { CAPTCHA_PATTERNS, FINAL_SUBMIT_PATTERNS, NEVER_AUTOFILL_INTENTS, SENSITIVE_INTENTS } from "@/lib/autofillRules";
+import { CAPTCHA_PATTERNS, FINAL_SUBMIT_PATTERNS, HIGH_RISK_EXACT_INTENTS, NEVER_AUTOFILL_INTENTS, SENSITIVE_INTENTS } from "@/lib/autofillRules";
 import { normalizeText } from "@/lib/utils";
 import { FieldIntent } from "@/types";
 
@@ -8,6 +8,10 @@ export function isSensitiveIntent(intent: FieldIntent) {
 
 export function shouldNeverAutofillIntent(intent: FieldIntent) {
   return NEVER_AUTOFILL_INTENTS.has(intent);
+}
+
+export function requiresExactOptionMatch(intent: FieldIntent) {
+  return HIGH_RISK_EXACT_INTENTS.has(intent);
 }
 
 export function isLikelyCaptchaText(value: string) {

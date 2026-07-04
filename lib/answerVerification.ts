@@ -4,13 +4,16 @@ import { DetectedField, HighestEducationLevel, SecurityClearanceLevel, WorkAutho
 
 import {
   matchBooleanOption,
+  matchEducationDegreeOption,
   matchEducationLevel,
   matchEeocVeteranOption,
+  matchFieldOfStudyOption,
   matchSecurityClearanceLevel,
   matchStructuredLocationOption,
   matchTextOption,
   matchWorkAuthorizationCategory
 } from "@/lib/optionMatcher";
+import { requiresExactOptionMatch } from "@/lib/safety";
 import { normalizeText } from "@/lib/utils";
 
 function valuesEquivalent(actual: string, expected: string) {
@@ -160,11 +163,24 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
       .catch(() => "");
     const expectedFileName = expectedValue.split("/").pop() || expectedValue.split("\\").pop() || expectedValue;
     const bodyText = await pageOrFrame.locator("body").innerText().catch(() => "");
+    const localErrorText = await locator
+      .evaluate((element) => {
+        const container =
+          element.closest("[data-automation-id='formField'], [data-automation-id='formSection'], .application-question, .form-field, .form-group, .field-wrapper") ??
+          element.parentElement;
+        return (container?.textContent || "").replace(/\s+/g, " ").trim();
+      })
+      .catch(() => "");
     const fileNameVisibleOnPage = normalizeText(bodyText).includes(normalizeText(expectedFileName));
+    const errorVisible = /upload failed|unable to upload|invalid file|error/i.test(localErrorText);
     return {
-      success: normalizeText(fileName).includes(normalizeText(expectedFileName)) || fileNameVisibleOnPage,
+      success: !errorVisible && (normalizeText(fileName).includes(normalizeText(expectedFileName)) || fileNameVisibleOnPage),
       actualValue: fileName || (fileNameVisibleOnPage ? expectedFileName : ""),
-      message: fileName || fileNameVisibleOnPage ? "File upload verified." : "File upload could not be verified."
+      message: errorVisible
+        ? "The page showed an upload error."
+        : fileName || fileNameVisibleOnPage
+          ? "File upload verified."
+          : "File upload could not be verified."
     };
   }
 
@@ -208,6 +224,9 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
   const actualWrapper = actual.wrapperText || "";
   const actualDisplay = actualLabel || actualValue || actualWrapper;
   const actualOptions = [actualDisplay].filter(Boolean);
+  const exactMatchRequired = requiresExactOptionMatch(field.intent);
+  const exactDisplayMatch =
+    valuesEquivalent(actualValue, expectedValue) || valuesEquivalent(actualLabel, expectedValue) || valuesEquivalent(actualWrapper, expectedValue);
   const semanticMatch =
     (field.intent === "work_authorization_category"
       ? Boolean(matchWorkAuthorizationCategory(actualOptions, normalizeText(expectedValue).replace(/\s+/g, "_") as WorkAuthorizationCategory))
@@ -217,6 +236,12 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
       : false) ||
     (field.intent === "education_highest_completed" || field.intent === "education_highest_attended"
       ? Boolean(matchEducationLevel(actualOptions, expectedValue as HighestEducationLevel))
+      : false) ||
+    (field.intent === "education_degree"
+      ? Boolean(matchEducationDegreeOption(actualOptions, expectedValue))
+      : false) ||
+    (field.intent === "education_major"
+      ? Boolean(matchFieldOfStudyOption(actualOptions, expectedValue))
       : false) ||
     (field.intent === "graduated_question" || field.intent === "previous_employment" || field.intent === "eeoc_race" || field.intent === "eeoc_disability"
       ? (expectedValue === "yes" || expectedValue === "no")
@@ -232,17 +257,18 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
     (field.intent === "eeoc_veteran"
       ? Boolean(matchEeocVeteranOption(actualOptions, expectedValue))
       : false);
-  const success =
+
+  const success = exactMatchRequired
+    ? exactDisplayMatch
+    : (
     (["city", "location", "full_location"].includes(field.intent)
       ? Boolean(matchStructuredLocationOption([actualDisplay], expectedValue))
       : false) ||
     semanticMatch ||
-    valuesEquivalent(actualValue, expectedValue) ||
-    valuesEquivalent(actualLabel, expectedValue) ||
-    valuesEquivalent(actualWrapper, expectedValue) ||
-    normalizeText(actualValue).includes(normalizeText(expectedValue)) ||
-    normalizeText(actualLabel).includes(normalizeText(expectedValue)) ||
-    normalizeText(actualWrapper).includes(normalizeText(expectedValue));
+    exactDisplayMatch ||
+    (normalizeText(actualValue).includes(normalizeText(expectedValue)) ||
+      normalizeText(actualLabel).includes(normalizeText(expectedValue)) ||
+      normalizeText(actualWrapper).includes(normalizeText(expectedValue))));
 
   return {
     success,

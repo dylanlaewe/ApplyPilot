@@ -140,6 +140,10 @@ npm run build
   npm run benchmark:applications
   ```
 
+- One-session Workday diagnostics:
+
+  Start the app with `npm run dev`, open the target Workday application session in ApplyPilot, then use `More actions` -> `Enable Workday diagnostics` before the next live autofill pass. Sanitized structural traces are written locally under `debug/workday-diagnostics/` and are ignored by Git.
+
 Notes:
 
 - The live benchmark uses public job application URLs that may expire or change without notice.

@@ -538,6 +538,38 @@ test("veteran status matches equivalent non-protected wording in dropdowns", () 
   assert.equal(result.suggestedValue, "I am not a veteran");
 });
 
+test("veteran status never collapses not-a-veteran into veteran-but-not-protected wording", () => {
+  const result = suggestion("eeoc_veteran", createProfile(), {
+    type: "select-one",
+    selectOptions: [
+      "I DO NOT WISH TO SELF-IDENTIFY",
+      "IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERANS",
+      "IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN",
+      "I AM NOT A VETERAN"
+    ]
+  });
+
+  assert.equal(result.suggestedValue, "I AM NOT A VETERAN");
+});
+
+test("degree dropdowns can safely map broad Workday degree options", () => {
+  const result = suggestion("education_degree", createProfile(), {
+    type: "select-one",
+    selectOptions: ["Associate Degree", "Bachelor's Degree", "Master's Degree"]
+  });
+
+  assert.equal(result.suggestedValue, "Bachelor's Degree");
+});
+
+test("field-of-study dropdowns can safely map broad Workday taxonomy options", () => {
+  const result = suggestion("education_major", createProfile(), {
+    type: "select-one",
+    selectOptions: ["Accounting", "Computer and Information Sciences, General", "Economics"]
+  });
+
+  assert.equal(result.suggestedValue, "Computer and Information Sciences, General");
+});
+
 test("why interested prompts get a grounded generated draft", () => {
   const result = buildAnswerSuggestion({
     intent: "why_interested",

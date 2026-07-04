@@ -194,6 +194,87 @@ test("custom menu-button dropdowns work through the custom adapter", async () =>
   assert.equal(result.actualValue.trim(), "Secret");
 });
 
+test("workday portal dropdowns use the linked listbox and verify the selected label", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <section data-automation-id="formSection">
+      <h2>Equal Opportunity</h2>
+      <div data-automation-id="formField">
+        <label id="gender-label">Gender</label>
+        <button id="gender_button" aria-haspopup="listbox" aria-controls="gender_listbox" aria-labelledby="gender-label" type="button">Select</button>
+      </div>
+    </section>
+    <div id="portal-root"></div>
+    <script>
+      const button = document.getElementById('gender_button');
+      const portalRoot = document.getElementById('portal-root');
+      button.addEventListener('click', () => {
+        portalRoot.innerHTML = '<div id="gender_listbox" role="listbox" data-automation-id="menu"><div role="option">Woman / Female</div><div role="option">Man / Male</div></div>';
+        for (const option of portalRoot.querySelectorAll('[role="option"]')) {
+          option.addEventListener('click', () => {
+            button.textContent = option.textContent;
+            portalRoot.innerHTML = '';
+          });
+        }
+      });
+    </script>
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Gender",
+      selector: "#gender_button",
+      type: "text",
+      controlType: "menu_button",
+      intent: "eeoc_gender",
+      frameUrl: "https://example.myworkdayjobs.com/apply"
+    }),
+    "Man / Male"
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.actualValue.trim(), "Man / Male");
+});
+
+test("workday veteran status is fail-closed when the page displays the wrong selected value", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <button id="veteran_button" aria-haspopup="listbox" aria-controls="veteran_listbox" type="button">Select</button>
+    <div id="veteran_listbox" role="listbox" style="display:none;border:1px solid #ccc">
+      <div role="option">I AM NOT A VETERAN</div>
+      <div role="option">IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN</div>
+    </div>
+    <script>
+      const button = document.getElementById('veteran_button');
+      const listbox = document.getElementById('veteran_listbox');
+      button.addEventListener('click', () => { listbox.style.display = 'block'; });
+      for (const option of listbox.querySelectorAll('[role="option"]')) {
+        option.addEventListener('click', () => {
+          button.textContent = 'IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN';
+          listbox.style.display = 'none';
+        });
+      }
+    </script>
+  `);
+
+  await assert.rejects(
+    fillField(
+      page,
+      detectedField({
+        label: "Veteran status",
+        selector: "#veteran_button",
+        type: "text",
+        controlType: "menu_button",
+        intent: "eeoc_veteran",
+        frameUrl: "https://example.myworkdayjobs.com/apply"
+      }),
+      "Not a protected veteran"
+    ),
+    /intended value|verified/i
+  );
+});
+
 test("radio groups verify the selected option instead of the first input in the group", async () => {
   if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
   await page.setContent(`
@@ -351,6 +432,46 @@ test("file uploads stay verified even when the input re-renders", async () => {
 
   assert.equal(result.success, true);
   assert.equal(result.actualValue, "resume.txt");
+});
+
+test("hidden workday file inputs verify through the visible uploaded filename", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  const tempDir = mkdtempSync(path.join(tmpdir(), "applypilot-upload-"));
+  const resumePath = path.join(tempDir, "resume.pdf");
+  writeFileSync(resumePath, "resume");
+
+  await page.setContent(`
+    <section data-automation-id="formSection">
+      <div data-automation-id="formField" id="resume-field">
+        <label for="resume_upload">Resume</label>
+        <button type="button">Upload resume</button>
+        <input id="resume_upload" type="file" style="display:none" />
+      </div>
+    </section>
+    <script>
+      const input = document.getElementById('resume_upload');
+      const field = document.getElementById('resume-field');
+      input.addEventListener('change', () => {
+        field.insertAdjacentHTML('beforeend', '<div class="uploaded-file">resume.pdf</div>');
+      }, { once: true });
+    </script>
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Resume",
+      type: "file",
+      selector: "#resume_upload",
+      controlType: "file",
+      intent: "resume_upload",
+      frameUrl: "https://example.myworkdayjobs.com/apply"
+    }),
+    resumePath
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.actualValue, "resume.pdf");
 });
 
 test("stale selectors recover by rescanning the current page before fill", async () => {

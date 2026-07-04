@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { appendAuditEntry, getApplicationSession, updateApplicationSession } from "@/lib/applications";
 import { createAuditEntry } from "@/lib/auditLog";
 import { detectAtsProvider, launchBrowserSession, summarizePageWarnings, waitForPageReadiness } from "@/lib/playwrightSession";
+import { ensureSessionAutomation } from "@/lib/sessionAutomation";
 import { extractJobMetadata } from "@/lib/jobMetadata";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
@@ -22,6 +23,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, id, {
       navigate: false,
       reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow
+    });
+    await ensureSessionAutomation(id, runtime.page, async (reason) => {
+      const { runAutofillPass } = await import("@/lib/quickApply");
+      await runAutofillPass(id, { trigger: reason, automatic: true });
     });
     await waitForPageReadiness(runtime.page);
     const pageSummary = await summarizePageWarnings(runtime.page);
@@ -43,7 +48,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       nextAction:
         current.status === "ready_for_submission" || current.status === "needs_review"
           ? current.nextAction
-          : "Complete any manual page steps in the browser, then try this page again when the form is visible.",
+          : "Complete any manual page steps in the browser. When a new visible form page settles, ApplyPilot will continue automatically.",
       atsProvider: detectAtsProvider(current.jobUrl),
       company: metadata.company || current.company,
       roleTitle: metadata.roleTitle || current.roleTitle,
