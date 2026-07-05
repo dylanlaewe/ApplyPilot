@@ -4,6 +4,7 @@ import { appendAuditEntry, getApplicationSession, updateApplicationSession } fro
 import { createAuditEntry } from "@/lib/auditLog";
 import { detectAtsProvider, launchBrowserSession, summarizePageWarnings, waitForPageReadiness } from "@/lib/playwrightSession";
 import { extractJobMetadata } from "@/lib/jobMetadata";
+import { ensureWorkdayOverlayForSession } from "@/lib/quickApply";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 
@@ -24,6 +25,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow
     });
     await waitForPageReadiness(runtime.page);
+    const atsProvider = detectAtsProvider(runtime.page.url() || session.currentPageUrl || session.jobUrl);
+    if (atsProvider === "workday") {
+      await ensureWorkdayOverlayForSession(id, runtime.page);
+    }
     const pageSummary = await summarizePageWarnings(runtime.page);
     const metadata = await extractJobMetadata(runtime.page);
 
@@ -43,8 +48,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       nextAction:
         current.status === "ready_for_submission" || current.status === "needs_review"
           ? current.nextAction
-          : "Complete any manual page steps in the browser, then try this page again when the form is visible.",
-      atsProvider: detectAtsProvider(current.jobUrl),
+          : atsProvider === "workday"
+            ? "Use the ApplyPilot control in the application window when the Workday form is visible."
+            : "Complete any manual page steps in the browser, then try this page again when the form is visible.",
+      atsProvider,
       company: metadata.company || current.company,
       roleTitle: metadata.roleTitle || current.roleTitle,
       metadataSource: metadata.source || current.metadataSource,

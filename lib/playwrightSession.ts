@@ -538,8 +538,36 @@ export async function handleFileUpload(frame: Frame, selector: string, filePath:
   await frame.locator(selector).setInputFiles(filePath);
 }
 
-async function fillTextControl(frame: Frame, selector: string, value: string) {
+async function fillTextControl(
+  frame: Frame,
+  selector: string,
+  value: string,
+  options: {
+    preferDirectInput?: boolean;
+  } = {}
+) {
   const locator = frame.locator(selector).first();
+  if (options.preferDirectInput) {
+    await locator
+      .evaluate((element, nextValue) => {
+        if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+          throw new Error("The text field could not be updated directly.");
+        }
+
+        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+        descriptor?.set?.call(element, nextValue);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      }, value)
+      .catch(() => undefined);
+
+    const directValue = await locator.inputValue().catch(() => "");
+    if (directValue === value) {
+      return;
+    }
+  }
+
   try {
     await locator.click({ timeout: 10_000 });
     await locator.fill(value);
@@ -565,7 +593,16 @@ async function fillTextControl(frame: Frame, selector: string, value: string) {
   }, value);
 }
 
-export async function fillField(page: Page, field: DetectedField, value: string) {
+export async function fillField(
+  page: Page,
+  field: DetectedField,
+  value: string,
+  options: {
+    allowRetry?: boolean;
+    highlight?: boolean;
+    preferDirectInput?: boolean;
+  } = {}
+) {
   if (!value.trim()) {
     throw new Error("No value provided for this field.");
   }
@@ -606,14 +643,24 @@ export async function fillField(page: Page, field: DetectedField, value: string)
         await fillCustomCombobox(frame, field, value);
       }
     } else {
-      await fillTextControl(frame, field.selector, value);
+      await fillTextControl(frame, field.selector, value, {
+        preferDirectInput: options.preferDirectInput
+      });
     }
   };
 
   await performFill();
   let verification = await verifyFilledValue(frame, field, value);
 
-  if (!verification.success && (field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.controlType === "listbox" || field.controlType === "custom_select" || field.controlType === "menu_button")) {
+  if (
+    options.allowRetry !== false &&
+    !verification.success &&
+    (field.controlType === "aria_combobox" ||
+      field.controlType === "autocomplete" ||
+      field.controlType === "listbox" ||
+      field.controlType === "custom_select" ||
+      field.controlType === "menu_button")
+  ) {
     await performFill();
     verification = await verifyFilledValue(frame, field, value);
   }
@@ -622,7 +669,9 @@ export async function fillField(page: Page, field: DetectedField, value: string)
     throw new Error(verification.message);
   }
 
-  await highlightField(frame, field.selector);
+  if (options.highlight !== false) {
+    await highlightField(frame, field.selector);
+  }
 
   return verification;
 }

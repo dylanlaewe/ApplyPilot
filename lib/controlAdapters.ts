@@ -90,7 +90,17 @@ async function waitForVisiblePortalOptions(frame: Frame, timeoutMs = 3_000) {
 
 async function openControl(frame: Frame, field: DetectedField) {
   const locator = frame.locator(field.selector).first();
-  await locator.click({ timeout: 10_000 });
+  try {
+    await locator.click({ timeout: 10_000 });
+  } catch {
+    await locator.click({ timeout: 10_000, force: true }).catch(async () => {
+      await locator.evaluate((element) => {
+        if (element instanceof HTMLElement) {
+          element.click();
+        }
+      });
+    });
+  }
 
   let options = await waitForVisiblePortalOptions(frame, 750);
   if (options.length) return options;
