@@ -1,5 +1,6 @@
 import type { Browser, BrowserContext, Frame, Page } from "playwright";
 
+import { detectAutomationAtsKind, toSessionAtsProvider } from "@/lib/atsStrategy";
 import { FINAL_SUBMIT_PATTERNS } from "@/lib/autofillRules";
 import { verifyFilledValue } from "@/lib/answerVerification";
 import { evaluateVisibleFieldCandidates } from "@/lib/browserFieldScanner";
@@ -34,13 +35,7 @@ function looksLikeInvisibleCaptchaFrame(descriptor: string, frameUrl: string) {
 }
 
 export function detectAtsProvider(url: string) {
-  const normalized = url.toLowerCase();
-  if (normalized.includes("greenhouse.io")) return "greenhouse";
-  if (normalized.includes("lever.co")) return "lever";
-  if (normalized.includes("ashbyhq.com")) return "ashby";
-  if (normalized.includes("workable.com")) return "workable";
-  if (normalized.includes("myworkdayjobs.com") || normalized.includes("workday")) return "workday";
-  return "generic";
+  return toSessionAtsProvider(detectAutomationAtsKind(url));
 }
 
 function escapeAttributeValue(value: string) {

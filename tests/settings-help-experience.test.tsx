@@ -261,6 +261,37 @@ test("settings autosaves the browser reuse preference quietly and shows save fai
   await waitFor(() => assert.match(failureView.container.textContent ?? "", /Could not save settings\./i), { timeout: 4000 });
 });
 
+test("advanced settings can disable Workday Safe Mode without exposing it in the normal flow", async () => {
+  const user = userEvent.setup({ document: globalThis.document });
+  const calls: Array<{ url: string; body?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    const url = getRequestUrl(input);
+    calls.push({ url, body: init?.body ? String(init.body) : undefined });
+
+    if (url === "/api/settings") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as ReturnType<typeof createDefaultSettings>;
+      return new Response(JSON.stringify({ settings: body }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  };
+
+  const view = createSettingsView();
+  assert.doesNotMatch(view.container.textContent ?? "", /Use Workday Safe Mode on verified Workday pages/i);
+
+  await user.click(view.getByText(/Advanced diagnostics/i));
+  const workdayToggle = await view.findByRole("checkbox", { name: /Use Workday Safe Mode on verified Workday pages/i });
+  assert.equal((workdayToggle as HTMLInputElement).checked, true);
+
+  await user.click(workdayToggle);
+  await waitFor(() => assert.equal(calls.some((call) => call.url === "/api/settings"), true), { timeout: 4000 });
+  assert.match(calls.find((call) => call.url === "/api/settings")?.body ?? "", /"workdaySafeModeEnabled":false/i);
+});
+
 test("privacy controls explain local storage, export local data, and confirm selective clearing", async () => {
   const user = userEvent.setup({ document: globalThis.document });
   const calls: Array<{ url: string; method: string; body?: string }> = [];

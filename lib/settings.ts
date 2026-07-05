@@ -3,6 +3,7 @@ import { readStorageFile, writeStorageFile } from "@/lib/storage";
 export interface ApplyPilotSettings {
   applicationBehavior: {
     reuseBrowserWindow: boolean;
+    workdaySafeModeEnabled: boolean;
   };
   createdAt: string;
   updatedAt: string;
@@ -14,7 +15,8 @@ export function createDefaultSettings(): ApplyPilotSettings {
   const now = new Date().toISOString();
   return {
     applicationBehavior: {
-      reuseBrowserWindow: true
+      reuseBrowserWindow: true,
+      workdaySafeModeEnabled: true
     },
     createdAt: now,
     updatedAt: now
@@ -26,7 +28,9 @@ export function normalizeSettings(value: Partial<ApplyPilotSettings> | null | un
 
   return {
     applicationBehavior: {
-      reuseBrowserWindow: value?.applicationBehavior?.reuseBrowserWindow ?? base.applicationBehavior.reuseBrowserWindow
+      reuseBrowserWindow: value?.applicationBehavior?.reuseBrowserWindow ?? base.applicationBehavior.reuseBrowserWindow,
+      workdaySafeModeEnabled:
+        value?.applicationBehavior?.workdaySafeModeEnabled ?? base.applicationBehavior.workdaySafeModeEnabled
     },
     createdAt: value?.createdAt || base.createdAt,
     updatedAt: value?.updatedAt || base.updatedAt

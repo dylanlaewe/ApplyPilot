@@ -609,6 +609,30 @@ export function SettingsWorkspace({
                   </div>
 
                   <div className="rounded-[20px] bg-white px-4 py-4 ring-1 ring-slate-200">
+                    <label className="flex items-start gap-4">
+                      <input
+                        type="checkbox"
+                        checked={settings.applicationBehavior.workdaySafeModeEnabled}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            applicationBehavior: {
+                              ...current.applicationBehavior,
+                              workdaySafeModeEnabled: event.target.checked
+                            }
+                          }))
+                        }
+                      />
+                      <span className="block">
+                        <span className="text-sm font-medium text-slate-950">Use Workday Safe Mode on verified Workday pages</span>
+                        <span className="mt-2 block text-sm leading-6 text-slate-600">
+                          Keeps Workday behavior behind the conservative local safe-mode path. Turning it off restores the accepted generic behavior for those pages without affecting other ATS systems.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="rounded-[20px] bg-white px-4 py-4 ring-1 ring-slate-200">
                     <div className="flex items-center gap-3">
                       <FileWarning className="h-4 w-4 text-slate-700" />
                       <p className="font-medium text-slate-900">Technical logs</p>
