@@ -1,6 +1,12 @@
 import type { Frame, Page } from "playwright";
 
-import { DetectedField, HighestEducationLevel, SecurityClearanceLevel, WorkAuthorizationCategory } from "@/types";
+import {
+  DetectedField,
+  FieldCommitState,
+  HighestEducationLevel,
+  SecurityClearanceLevel,
+  WorkAuthorizationCategory
+} from "@/types";
 
 import {
   matchBooleanOption,
@@ -13,10 +19,40 @@ import {
 } from "@/lib/optionMatcher";
 import { normalizeText } from "@/lib/utils";
 
+type VerificationResult = {
+  success: boolean;
+  actualValue: string;
+  message: string;
+  commitState: FieldCommitState;
+};
+
+type ValidationSnapshot = {
+  actualValue: string;
+  actualLabel: string;
+  actualWrapper: string;
+  displayedValue: string;
+  errorMessages: string[];
+  ariaInvalid: boolean;
+  controlInvalid: boolean;
+  descriptorText: string[];
+};
+
 function valuesEquivalent(actual: string, expected: string) {
   const digitsOnly = (value: string) => value.replace(/\D/g, "");
-  if (digitsOnly(actual) && digitsOnly(actual) === digitsOnly(expected)) {
-    return true;
+  const actualDigits = digitsOnly(actual);
+  const expectedDigits = digitsOnly(expected);
+  if (actualDigits) {
+    if (actualDigits === expectedDigits) {
+      return true;
+    }
+
+    if (actualDigits.length === 10 && expectedDigits.length === 11 && expectedDigits.startsWith("1") && expectedDigits.slice(1) === actualDigits) {
+      return true;
+    }
+
+    if (expectedDigits.length === 10 && actualDigits.length === 11 && actualDigits.startsWith("1") && actualDigits.slice(1) === expectedDigits) {
+      return true;
+    }
   }
   return normalizeText(actual) === normalizeText(expected);
 }
@@ -76,7 +112,241 @@ async function readNamelessRadioState(pageOrFrame: Page | Frame, field: Detected
   }).catch(() => []);
 }
 
-export async function verifyFilledValue(pageOrFrame: Page | Frame, field: DetectedField, expectedValue: string) {
+function buildFailureResult(actualValue: string, commitState: FieldCommitState, message: string): VerificationResult {
+  return {
+    success: false,
+    actualValue,
+    commitState,
+    message
+  };
+}
+
+function doesActualMatchExpected(field: DetectedField, snapshot: Pick<ValidationSnapshot, "actualValue" | "actualLabel" | "actualWrapper" | "displayedValue">, expectedValue: string) {
+  const actualOptions = [snapshot.displayedValue].filter(Boolean);
+  const semanticMatch =
+    (field.intent === "work_authorization_category"
+      ? Boolean(
+          matchWorkAuthorizationCategory(
+            actualOptions,
+            normalizeText(expectedValue).replace(/\s+/g, "_") as WorkAuthorizationCategory
+          )
+        )
+      : false) ||
+    (field.intent === "security_clearance_level"
+      ? Boolean(
+          matchSecurityClearanceLevel(
+            actualOptions,
+            normalizeText(expectedValue).replace(/\s+/g, "_") as SecurityClearanceLevel
+          )
+        )
+      : false) ||
+    (field.intent === "education_highest_completed" || field.intent === "education_highest_attended"
+      ? Boolean(matchEducationLevel(actualOptions, expectedValue as HighestEducationLevel))
+      : false) ||
+    (field.intent === "graduated_question" ||
+    field.intent === "previous_employment" ||
+    field.intent === "eeoc_race" ||
+    field.intent === "eeoc_disability"
+      ? expectedValue === "yes" || expectedValue === "no"
+        ? Boolean(
+            matchBooleanOption({
+              questionText: field.questionText || field.label,
+              options: actualOptions,
+              answer: expectedValue as "yes" | "no",
+              intent: field.intent
+            })
+          )
+        : false
+      : false) ||
+    (field.intent === "phone_country_code"
+      ? normalizeText(snapshot.displayedValue).includes(normalizeText(expectedValue)) ||
+        normalizeText(snapshot.displayedValue).includes("+1")
+      : false) ||
+    (field.intent === "eeoc_gender" ? Boolean(matchTextOption(actualOptions, expectedValue)) : false) ||
+    (field.intent === "eeoc_veteran" ? Boolean(matchEeocVeteranOption(actualOptions, expectedValue)) : false);
+
+  return (
+    (["city", "location", "full_location"].includes(field.intent)
+      ? Boolean(matchStructuredLocationOption([snapshot.displayedValue], expectedValue))
+      : false) ||
+    semanticMatch ||
+    valuesEquivalent(snapshot.actualValue, expectedValue) ||
+    valuesEquivalent(snapshot.actualLabel, expectedValue) ||
+    valuesEquivalent(snapshot.actualWrapper, expectedValue) ||
+    normalizeText(snapshot.actualValue).includes(normalizeText(expectedValue)) ||
+    normalizeText(snapshot.actualLabel).includes(normalizeText(expectedValue)) ||
+    normalizeText(snapshot.actualWrapper).includes(normalizeText(expectedValue))
+  );
+}
+
+async function readValidationSnapshot(pageOrFrame: Page | Frame, field: DetectedField): Promise<ValidationSnapshot> {
+  const locator = pageOrFrame.locator(field.selector).first();
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+
+  const actualValue = await locator.inputValue().catch(async () => normalize((await locator.textContent().catch(() => "")) || ""));
+  const actualLabel = await locator
+    .evaluate((element) => {
+      const wrapper =
+        element.closest(".select__container, .select-shell, .field, .form-field, .form-group, .application-question") ??
+        element.parentElement;
+      if (element instanceof HTMLSelectElement) {
+        return element.selectedOptions?.[0]?.textContent?.trim() ?? "";
+      }
+      return (
+        (wrapper?.querySelector(".select__single-value")?.textContent || "").trim() ||
+        (wrapper?.querySelector("#aria-selection")?.textContent || "")
+          .replace(/^option\s+/i, "")
+          .replace(/,\s*selected\.?/i, "")
+          .trim()
+      );
+    })
+    .catch(() => "");
+  const actualWrapper = await locator
+    .evaluate((element) => {
+      const wrapper =
+        element.closest(
+          [
+            "[data-applypilot-group-id]",
+            "fieldset",
+            ".application-question",
+            ".form-field",
+            ".form-group",
+            ".field",
+            "[role='group']",
+            "[data-testid*='field']"
+          ].join(", ")
+        ) ?? element.parentElement;
+      return (wrapper?.textContent || "").replace(/\s+/g, " ").trim();
+    })
+    .catch(() => "");
+  const ariaInvalid = ((await locator.getAttribute("aria-invalid").catch(() => null)) ?? "") === "true";
+  const controlValidation = await locator
+    .evaluate((element) => {
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement)) {
+        return {
+          controlInvalid: false,
+          validationMessage: ""
+        };
+      }
+
+      return {
+        controlInvalid: !element.checkValidity(),
+        validationMessage: element.validationMessage || ""
+      };
+    })
+    .catch(() => ({
+      controlInvalid: false,
+      validationMessage: ""
+    }));
+  const describedByIds = (((await locator.getAttribute("aria-describedby").catch(() => null)) ?? "") as string)
+    .split(/\s+/)
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const descriptorText = (
+    await Promise.all(
+      describedByIds.map((id) =>
+        locator
+          .evaluate((element, describedById) => {
+            const candidate = document.getElementById(describedById);
+            if (!candidate) return "";
+            const style = candidate instanceof HTMLElement ? window.getComputedStyle(candidate) : null;
+            const rect = candidate instanceof HTMLElement ? candidate.getBoundingClientRect() : null;
+            if (style && rect && (style.display === "none" || style.visibility === "hidden" || rect.width <= 0 || rect.height <= 0)) {
+              return "";
+            }
+            return candidate.textContent || "";
+          }, id)
+          .catch(() => "")
+      )
+    )
+  )
+    .map(normalize)
+    .filter(Boolean);
+  const wrapperErrors = await locator
+    .evaluate((element) => {
+      const normalizeInner = (value: string) => value.replace(/\s+/g, " ").trim();
+      const wrapper =
+        element.closest(
+          [
+            "[data-applypilot-group-id]",
+            "fieldset",
+            ".application-question",
+            ".form-field",
+            ".form-group",
+            ".field",
+            "[role='group']",
+            "[data-testid*='field']"
+          ].join(", ")
+        ) ?? element.parentElement;
+      if (!wrapper) return [];
+
+      return Array.from(
+        wrapper.querySelectorAll(
+          [
+            "[role='alert']",
+            "[aria-live='polite']",
+            "[aria-live='assertive']",
+            ".error",
+            ".errors",
+            ".field-error",
+            ".validation-error",
+            ".input-error",
+            ".invalid-feedback",
+            "[data-testid*='error']",
+            "[data-qa*='error']"
+          ].join(", ")
+        )
+      )
+        .filter((candidate) => {
+          if (!(candidate instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(candidate);
+          const rect = candidate.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        })
+        .map((candidate) => normalizeInner(candidate.textContent || ""))
+        .filter(Boolean);
+    })
+    .catch(() => []);
+  const errorMessages = Array.from(
+    new Set(
+      [...descriptorText, ...wrapperErrors, normalize(controlValidation.validationMessage || "")]
+        .map(normalize)
+        .filter(Boolean)
+    )
+  );
+
+  return {
+    actualValue: normalize(actualValue || ""),
+    actualLabel: normalize(actualLabel || ""),
+    actualWrapper: normalize(actualWrapper || ""),
+    displayedValue: normalize(actualLabel || actualValue || actualWrapper || ""),
+    errorMessages,
+    ariaInvalid,
+    controlInvalid: controlValidation.controlInvalid,
+    descriptorText
+  };
+}
+
+async function settleFieldCommitState(pageOrFrame: Page | Frame, selector: string) {
+  const locator = pageOrFrame.locator(selector).first();
+
+  await locator
+    .evaluate((element) => {
+      if (!(element instanceof HTMLElement)) return;
+      element.blur();
+      const form =
+        element.closest("form") ??
+        element.closest(".application-question, .form-field, .form-group, .fieldset, fieldset");
+      if (form instanceof HTMLElement) {
+        form.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    })
+    .catch(() => undefined);
+
+  await pageOrFrame.waitForTimeout(120);
+}
+
+export async function verifyFilledValue(pageOrFrame: Page | Frame, field: DetectedField, expectedValue: string): Promise<VerificationResult> {
   const locator = pageOrFrame.locator(field.selector).first();
   const type = field.type;
 
@@ -107,7 +377,8 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
       return {
         success,
         actualValue: checkedLabels.join(", "),
-        message: success ? "Checkbox group verified." : "Checkbox group did not match the intended answer."
+        commitState: success ? "committed" : "unresolved",
+        message: success ? "Checkbox group verified and committed." : "Checkbox group did not match the intended answer."
       };
     }
 
@@ -116,7 +387,8 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
     return {
       success: checked === shouldBeChecked,
       actualValue: checked ? "checked" : "unchecked",
-      message: checked === shouldBeChecked ? "Checkbox state verified." : "Checkbox state did not match the intended answer."
+      commitState: checked === shouldBeChecked ? "committed" : "unresolved",
+      message: checked === shouldBeChecked ? "Checkbox state verified and committed." : "Checkbox state did not match the intended answer."
     };
   }
 
@@ -139,7 +411,8 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
       return {
         success,
         actualValue: selected,
-        message: success ? "Radio selection verified." : "Radio selection could not be verified."
+        commitState: success ? "committed" : "unresolved",
+        message: success ? "Radio selection verified and committed." : "Radio selection could not be verified."
       };
     }
 
@@ -147,7 +420,8 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
     return {
       success: checked,
       actualValue: checked ? expectedValue : "",
-      message: checked ? "Radio selection verified." : "Radio selection could not be verified."
+      commitState: checked ? "committed" : "unresolved",
+      message: checked ? "Radio selection verified and committed." : "Radio selection could not be verified."
     };
   }
 
@@ -164,89 +438,64 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
     return {
       success: normalizeText(fileName).includes(normalizeText(expectedFileName)) || fileNameVisibleOnPage,
       actualValue: fileName || (fileNameVisibleOnPage ? expectedFileName : ""),
-      message: fileName || fileNameVisibleOnPage ? "File upload verified." : "File upload could not be verified."
+      commitState: fileName || fileNameVisibleOnPage ? "committed" : "unresolved",
+      message: fileName || fileNameVisibleOnPage ? "File upload verified and committed." : "File upload could not be verified."
     };
   }
 
-  const actual = await locator.evaluate((element) => {
-    if (element instanceof HTMLSelectElement) {
-      const selectedOption = element.selectedOptions?.[0];
-      return {
-        value: element.value ?? "",
-        label: selectedOption?.textContent?.trim() ?? "",
-        wrapperText: ""
-      };
-    }
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      const wrapper =
-        element.closest(".select__container, .select-shell, .field, .form-field, .form-group, .application-question") ?? element.parentElement;
-      const selectedText =
-        (wrapper?.querySelector(".select__single-value")?.textContent || "").trim() ||
-        (wrapper?.querySelector("#aria-selection")?.textContent || "").replace(/^option\s+/i, "").replace(/,\s*selected\.?/i, "").trim();
-      return {
-        value: element.value ?? "",
-        label: selectedText,
-        wrapperText: (wrapper?.textContent || "").replace(/\s+/g, " ").trim()
-      };
-    }
-    if (element instanceof HTMLElement) {
-      return {
-        value: element.innerText || element.textContent || "",
-        label: "",
-        wrapperText: ""
-      };
-    }
+  const firstSnapshot = await readValidationSnapshot(pageOrFrame, field);
+  await settleFieldCommitState(pageOrFrame, field.selector);
+  const secondSnapshot = await readValidationSnapshot(pageOrFrame, field);
+  await pageOrFrame.waitForTimeout(120);
+  const thirdSnapshot = await readValidationSnapshot(pageOrFrame, field);
+
+  const initiallyMatched = doesActualMatchExpected(field, firstSnapshot, expectedValue);
+  const matchedAfterBlur = doesActualMatchExpected(field, secondSnapshot, expectedValue);
+  const matchedAfterRescan = doesActualMatchExpected(field, thirdSnapshot, expectedValue);
+  const hasValidationError =
+    secondSnapshot.ariaInvalid ||
+    secondSnapshot.controlInvalid ||
+    thirdSnapshot.ariaInvalid ||
+    thirdSnapshot.controlInvalid ||
+    secondSnapshot.errorMessages.some((message) => /required|select|enter|valid|invalid|complete/i.test(message)) ||
+    thirdSnapshot.errorMessages.some((message) => /required|select|enter|valid|invalid|complete/i.test(message));
+
+  if (matchedAfterRescan && !hasValidationError) {
     return {
-      value: "",
-      label: "",
-      wrapperText: ""
+      success: true,
+      actualValue: thirdSnapshot.displayedValue,
+      commitState: "committed",
+      message: "Value verified and committed."
     };
-  });
+  }
 
-  const actualValue = actual.value;
-  const actualLabel = actual.label;
-  const actualWrapper = actual.wrapperText || "";
-  const actualDisplay = actualLabel || actualValue || actualWrapper;
-  const actualOptions = [actualDisplay].filter(Boolean);
-  const semanticMatch =
-    (field.intent === "work_authorization_category"
-      ? Boolean(matchWorkAuthorizationCategory(actualOptions, normalizeText(expectedValue).replace(/\s+/g, "_") as WorkAuthorizationCategory))
-      : false) ||
-    (field.intent === "security_clearance_level"
-      ? Boolean(matchSecurityClearanceLevel(actualOptions, normalizeText(expectedValue).replace(/\s+/g, "_") as SecurityClearanceLevel))
-      : false) ||
-    (field.intent === "education_highest_completed" || field.intent === "education_highest_attended"
-      ? Boolean(matchEducationLevel(actualOptions, expectedValue as HighestEducationLevel))
-      : false) ||
-    (field.intent === "graduated_question" || field.intent === "previous_employment" || field.intent === "eeoc_race" || field.intent === "eeoc_disability"
-      ? (expectedValue === "yes" || expectedValue === "no")
-        ? Boolean(matchBooleanOption({ questionText: field.questionText || field.label, options: actualOptions, answer: expectedValue as "yes" | "no", intent: field.intent }))
-        : false
-      : false) ||
-    (field.intent === "phone_country_code"
-      ? normalizeText(actualDisplay).includes(normalizeText(expectedValue)) || normalizeText(actualDisplay).includes("+1")
-      : false) ||
-    (field.intent === "eeoc_gender"
-      ? Boolean(matchTextOption(actualOptions, expectedValue))
-      : false) ||
-    (field.intent === "eeoc_veteran"
-      ? Boolean(matchEeocVeteranOption(actualOptions, expectedValue))
-      : false);
-  const success =
-    (["city", "location", "full_location"].includes(field.intent)
-      ? Boolean(matchStructuredLocationOption([actualDisplay], expectedValue))
-      : false) ||
-    semanticMatch ||
-    valuesEquivalent(actualValue, expectedValue) ||
-    valuesEquivalent(actualLabel, expectedValue) ||
-    valuesEquivalent(actualWrapper, expectedValue) ||
-    normalizeText(actualValue).includes(normalizeText(expectedValue)) ||
-    normalizeText(actualLabel).includes(normalizeText(expectedValue)) ||
-    normalizeText(actualWrapper).includes(normalizeText(expectedValue));
+  if ((initiallyMatched || matchedAfterBlur) && !matchedAfterRescan) {
+    return buildFailureResult(
+      thirdSnapshot.displayedValue || secondSnapshot.displayedValue || firstSnapshot.displayedValue,
+      "value_reverted",
+      "The field showed the intended value briefly, but it reverted before the form accepted it."
+    );
+  }
 
-  return {
-    success,
-    actualValue: actualDisplay,
-    message: success ? "Value verified." : "The page did not display the intended value."
-  };
+  if ((matchedAfterBlur || matchedAfterRescan) && hasValidationError) {
+    return buildFailureResult(
+      thirdSnapshot.displayedValue || secondSnapshot.displayedValue || firstSnapshot.displayedValue,
+      "validation_error_remains",
+      "The field still showed a validation error after ApplyPilot filled it."
+    );
+  }
+
+  if (initiallyMatched || matchedAfterBlur || matchedAfterRescan) {
+    return buildFailureResult(
+      thirdSnapshot.displayedValue || secondSnapshot.displayedValue || firstSnapshot.displayedValue,
+      "visually_present_but_uncommitted",
+      "The value appeared on the page, but the form did not commit it."
+    );
+  }
+
+  return buildFailureResult(
+    thirdSnapshot.displayedValue || secondSnapshot.displayedValue || firstSnapshot.displayedValue,
+    "unresolved",
+    "The page did not display the intended value."
+  );
 }

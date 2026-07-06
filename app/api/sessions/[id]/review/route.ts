@@ -57,7 +57,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
                   reviewCategory: null,
                   reason: "Filled after manual review and explicit approval.",
                   verificationStatus: "verified" as const,
-                  verificationMessage: verification.message
+                  verificationMessage: verification.message,
+                  commitState: verification.commitState
                 }
               : entry
           );

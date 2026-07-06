@@ -2,6 +2,7 @@ import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateAppl
 import { prepareDetectedFields, applyWaitingUpdate } from "@/lib/autofillPreparation";
 import { resolveAutomationStrategyForPage } from "@/lib/atsStrategy";
 import { createAuditEntry } from "@/lib/auditLog";
+import { writeGenericPassDiagnostic } from "@/lib/autofillDiagnostics";
 import { SAFE_AUTOFILL_THRESHOLD } from "@/lib/autofillRules";
 import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
@@ -63,6 +64,7 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
         : `${field.reason} Filled during Quick Apply.`;
       field.verificationStatus = "verified";
       field.verificationMessage = verification.message;
+      field.commitState = verification.commitState;
       auditEntries.push(
         createAuditEntry(sessionId, "field_filled", `Autofilled ${field.label || field.name || "field"}.`, {
           fieldId: field.id,
@@ -77,6 +79,7 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
       field.reason = `Autofill failed: ${humanizeError(error)}`;
       field.verificationStatus = "failed";
       field.verificationMessage = humanizeError(error);
+      field.commitState = (error as { commitState?: DetectedField["commitState"] }).commitState ?? "unresolved";
       auditEntries.push(
         createAuditEntry(sessionId, "error", `Autofill failed for ${field.label || field.name || "field"}.`, {
           fieldId: field.id,
@@ -114,6 +117,8 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   for (const entry of auditEntries) {
     updated = await appendAuditEntry(sessionId, entry);
   }
+
+  await writeGenericPassDiagnostic(sessionId, session.atsProvider, prepared.detectedFields).catch(() => undefined);
 
   return updateApplicationSession(sessionId, (current) => ({
     ...(() => {

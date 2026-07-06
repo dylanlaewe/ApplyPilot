@@ -12,6 +12,11 @@ import { isFinalSubmitLabel } from "@/lib/safety";
 import { normalizeText } from "@/lib/utils";
 import { CaptchaDetectionResult, CaptchaEvidence, DetectedField, RawScannedField } from "@/types";
 
+type FillVerificationError = Error & {
+  commitState?: DetectedField["commitState"];
+  actualValue?: string;
+};
+
 type BrowserRuntime = {
   browser: Browser;
   context: BrowserContext;
@@ -535,13 +540,112 @@ export async function handleFileUpload(frame: Frame, selector: string, filePath:
 
 async function fillTextControl(
   frame: Frame,
-  selector: string,
+  field: DetectedField,
   value: string,
   options: {
     preferDirectInput?: boolean;
   } = {}
 ) {
+  const selector = field.selector;
   const locator = frame.locator(selector).first();
+
+  const controlAttributes = await locator
+    .evaluate((element) => {
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+        return {
+          maxLength: -1,
+          pattern: "",
+          placeholder: "",
+          type: "",
+          inputMode: ""
+        };
+      }
+
+      return {
+        maxLength: element.maxLength,
+        pattern: element instanceof HTMLInputElement ? element.pattern || "" : "",
+        placeholder: element.placeholder || "",
+        type: element.type || "",
+        inputMode: element.inputMode || ""
+      };
+    })
+    .catch(() => ({
+      maxLength: -1,
+      pattern: "",
+      placeholder: "",
+      type: "",
+      inputMode: ""
+    }));
+
+  const adaptPhoneValue = (nextValue: string) => {
+    const digits = nextValue.replace(/\D/g, "");
+    if (!digits) return nextValue;
+
+    const hasSeparateCountrySelector = ["phone_number"].includes(field.intent);
+    const nationalDigits = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+    const placeholder = normalizeText(controlAttributes.placeholder);
+    const pattern = controlAttributes.pattern;
+    const type = normalizeText(controlAttributes.type);
+    const inputMode = normalizeText(controlAttributes.inputMode);
+
+    const e164 = nationalDigits.length === 10 ? `+1${nationalDigits}` : nextValue.replace(/\s+/g, "");
+    const spacedInternational = nationalDigits.length === 10 ? `+1 ${nationalDigits}` : nextValue;
+    const nationalPlain = nationalDigits;
+    const nationalDashed =
+      nationalDigits.length === 10
+        ? `${nationalDigits.slice(0, 3)}-${nationalDigits.slice(3, 6)}-${nationalDigits.slice(6)}`
+        : nationalDigits;
+    const nationalPretty =
+      nationalDigits.length === 10
+        ? `(${nationalDigits.slice(0, 3)}) ${nationalDigits.slice(3, 6)}-${nationalDigits.slice(6)}`
+        : nationalDigits;
+
+    const hintedCandidates = hasSeparateCountrySelector
+      ? [nationalPlain, nationalDashed, nationalPretty, e164, spacedInternational]
+      : /\+|international|e164/.test(placeholder) || /\+/.test(pattern)
+        ? [e164, spacedInternational, nationalPlain, nationalDashed, nationalPretty]
+        : /[\(\)-]/.test(controlAttributes.placeholder) || /\(\d{3}\)/.test(pattern)
+          ? [nationalPretty, nationalDashed, nationalPlain, e164, spacedInternational]
+          : type === "tel" || inputMode === "tel"
+            ? [nationalPretty, nationalPlain, nationalDashed, e164, spacedInternational]
+            : [nextValue, nationalPlain, nationalDashed, nationalPretty, e164, spacedInternational];
+
+    const matchesPattern = (candidate: string) => {
+      if (!pattern) return true;
+      try {
+        return new RegExp(`^(?:${pattern})$`).test(candidate);
+      } catch {
+        return true;
+      }
+    };
+
+    const fitsLength = (candidate: string) => controlAttributes.maxLength < 0 || candidate.length <= controlAttributes.maxLength;
+    return hintedCandidates.find((candidate) => fitsLength(candidate) && matchesPattern(candidate)) ??
+      hintedCandidates.find((candidate) => fitsLength(candidate)) ??
+      nextValue;
+  };
+
+  const nextValue =
+    field.intent === "phone" || field.intent === "full_phone_number" || field.intent === "phone_number"
+      ? adaptPhoneValue(value)
+      : value;
+
+  try {
+    await locator.click({ timeout: 10_000 });
+    await locator.fill(nextValue);
+    await locator.evaluate((element) => {
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      element.blur();
+    });
+    return nextValue;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/intercepts pointer events|subtree intercepts pointer events/i.test(message) && !options.preferDirectInput) {
+      throw error;
+    }
+  }
+
   if (options.preferDirectInput) {
     await locator
       .evaluate((element, nextValue) => {
@@ -554,23 +658,17 @@ async function fillTextControl(
         descriptor?.set?.call(element, nextValue);
         element.dispatchEvent(new Event("input", { bubbles: true }));
         element.dispatchEvent(new Event("change", { bubbles: true }));
-      }, value)
+      }, nextValue)
       .catch(() => undefined);
 
     const directValue = await locator.inputValue().catch(() => "");
-    if (directValue === value) {
-      return;
-    }
-  }
-
-  try {
-    await locator.click({ timeout: 10_000 });
-    await locator.fill(value);
-    return;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/intercepts pointer events|subtree intercepts pointer events/i.test(message)) {
-      throw error;
+    if (directValue === nextValue) {
+      await locator.evaluate((element) => {
+        if (element instanceof HTMLElement) {
+          element.blur();
+        }
+      });
+      return nextValue;
     }
   }
 
@@ -582,10 +680,13 @@ async function fillTextControl(
     const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
     descriptor?.set?.call(element, nextValue);
+    element.focus();
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
-    element.focus();
-  }, value);
+    element.blur();
+  }, nextValue);
+
+  return nextValue;
 }
 
 export async function fillField(
@@ -638,7 +739,7 @@ export async function fillField(
         await fillCustomCombobox(frame, field, value);
       }
     } else {
-      await fillTextControl(frame, field.selector, value, {
+      await fillTextControl(frame, field, value, {
         preferDirectInput: options.preferDirectInput
       });
     }
@@ -661,7 +762,10 @@ export async function fillField(
   }
 
   if (!verification.success) {
-    throw new Error(verification.message);
+    const failure = new Error(verification.message) as FillVerificationError;
+    failure.commitState = verification.commitState;
+    failure.actualValue = verification.actualValue;
+    throw failure;
   }
 
   if (options.highlight !== false) {

@@ -162,6 +162,21 @@ test("repeatable sections and resume uploads stay manual in Workday safe mode", 
   assert.equal(experience.reason, "This section requires manual setup");
 });
 
+test("basic deterministic Workday text fields stay eligible for one safe pass", () => {
+  const [address, city, state, postalCode, country] = applyWorkdaySafeModeRules([
+    field({ intent: "street_address", label: "Street address", suggestedValue: "123 Main St" }),
+    field({ intent: "city", label: "City", suggestedValue: "Boston" }),
+    field({ intent: "state", label: "State", suggestedValue: "MA" }),
+    field({ intent: "postal_code", label: "Postal code", suggestedValue: "02118" }),
+    field({ intent: "country", label: "Country", suggestedValue: "United States" })
+  ]);
+
+  for (const current of [address, city, state, postalCode, country]) {
+    assert.equal(current.status, "needs_review");
+    assert.match(current.reason, /Safe to autofill on this Workday page/i);
+  }
+});
+
 test("Workday execution plan runs top-to-bottom, scrolls once per section, and never retries a verified control", async () => {
   const first = field({ id: "first", label: "First name", selector: "#first", intent: "first_name" });
   const second = field({ id: "second", label: "Email", selector: "#email", intent: "email" });

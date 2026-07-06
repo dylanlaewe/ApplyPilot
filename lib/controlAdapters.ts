@@ -178,7 +178,7 @@ function matchControlOption(field: DetectedField, options: ControlOption[], valu
     case "city":
     case "location":
     case "full_location":
-      return matchStructuredLocationOption(texts, value) ?? matchTextOption(texts, value, "Matched location autocomplete option.");
+      return matchStructuredLocationOption(texts, value);
     default:
       return matchTextOption(texts, value, "Matched custom dropdown option.");
   }

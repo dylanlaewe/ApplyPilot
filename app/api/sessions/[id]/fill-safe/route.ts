@@ -43,6 +43,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         field.reason = `${field.reason} Filled by ApplyPilot after passing safe autofill checks.`;
         field.verificationStatus = "verified";
         field.verificationMessage = verification.message;
+        field.commitState = verification.commitState;
         nextAuditEntries.push(
           createAuditEntry(id, "field_filled", `Filled ${field.label || field.name || "field"}.`, {
             fieldId: field.id,
@@ -55,6 +56,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         field.reason = `Fill failed: ${humanizeError(error)}`;
         field.verificationStatus = "failed";
         field.verificationMessage = humanizeError(error);
+        field.commitState = (error as { commitState?: (typeof field)["commitState"] }).commitState ?? "unresolved";
         nextAuditEntries.push(
           createAuditEntry(id, "error", `Could not fill ${field.label || field.name || "field"}.`, {
             fieldId: field.id,

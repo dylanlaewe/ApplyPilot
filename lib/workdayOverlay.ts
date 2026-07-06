@@ -154,7 +154,9 @@ export async function ensureWorkdayOverlay(page: Page, sessionId: string) {
     return;
   }
 
-  const installOverlay = ({ id, bindingName, markup }: { id: string; bindingName: string; markup: string }) => {
+  const markup = getWorkdayOverlayMarkup();
+  const installArgs = { id: sessionId, bindingName: OVERLAY_BINDING, markup };
+  await page.addInitScript(({ id, bindingName, markup }) => {
     const existing = document.getElementById("applypilot-workday-overlay");
     if (existing) {
       existing.setAttribute("data-session-id", id);
@@ -166,39 +168,16 @@ export async function ensureWorkdayOverlay(page: Page, sessionId: string) {
     root.setAttribute("data-session-id", id);
     root.innerHTML = markup;
 
-    const updateDetails = (items: Array<{ label: string; reason: string }> | undefined) => {
-      const details = root.querySelector(".details");
-      if (!(details instanceof HTMLElement)) return;
+    const status = root.querySelector(".status");
+    const details = root.querySelector(".details");
+    if (!(status instanceof HTMLElement) || !(details instanceof HTMLElement)) {
+      return;
+    }
 
-      if (!items?.length) {
-        details.innerHTML = "";
-        return;
-      }
-
-      const list = document.createElement("ul");
-      for (const item of items.slice(0, 8)) {
-        const entry = document.createElement("li");
-        entry.textContent = `${item.label}: ${item.reason}`;
-        list.appendChild(entry);
-      }
-      details.innerHTML = "";
-      details.appendChild(list);
-    };
-
-    const setBusy = (busy: boolean) => {
-      root.querySelectorAll("button").forEach((button) => {
-        if (button instanceof HTMLButtonElement) {
-          button.disabled = busy;
-        }
-      });
-    };
-
-    root.querySelectorAll("button").forEach((button) => {
+    const buttons = Array.from(root.querySelectorAll("button"));
+    for (const button of buttons) {
       button.addEventListener("click", async () => {
-        const status = root.querySelector(".status");
-        if (!(status instanceof HTMLElement)) return;
-
-        const kind = button.getAttribute("data-kind") as OverlayAction | null;
+        const kind = button.getAttribute("data-kind");
         const actionBinding = (window as unknown as Record<string, unknown>)[bindingName];
         if (!kind || typeof actionBinding !== "function") return;
 
@@ -210,43 +189,126 @@ export async function ensureWorkdayOverlay(page: Page, sessionId: string) {
               : kind === "show-unresolved"
                 ? "Needs review"
                 : "Stopped";
+        details.textContent = "";
 
-        setBusy(true);
-        updateDetails(undefined);
+        for (const currentButton of buttons) {
+          if (currentButton instanceof HTMLButtonElement) {
+            currentButton.disabled = true;
+          }
+        }
 
         try {
           const result = await (actionBinding as (payload: {
             sessionId: string;
-            action: OverlayAction;
+            action: string;
           }) => Promise<OverlayActionResult>)({
             sessionId: id,
             action: kind
           });
           status.textContent = result.status;
-          updateDetails(result.unresolved);
-          const details = root.querySelector(".details");
-          if (details instanceof HTMLElement && result.message) {
-            if (!result.unresolved?.length) {
-              details.textContent = result.message;
+          if (result.unresolved?.length) {
+            const list = document.createElement("ul");
+            for (const item of result.unresolved.slice(0, 8)) {
+              const entry = document.createElement("li");
+              entry.textContent = `${item.label}: ${item.reason}`;
+              list.appendChild(entry);
             }
+            details.replaceChildren(list);
+          } else {
+            details.textContent = result.message;
           }
         } catch {
           status.textContent = "Needs review";
-          const details = root.querySelector(".details");
-          if (details instanceof HTMLElement) {
-            details.textContent = "ApplyPilot could not finish that action on this page.";
-          }
+          details.textContent = "ApplyPilot could not finish that action on this page.";
         } finally {
-          setBusy(false);
+          for (const currentButton of buttons) {
+            if (currentButton instanceof HTMLButtonElement) {
+              currentButton.disabled = false;
+            }
+          }
         }
       });
-    });
+    }
 
     document.body.appendChild(root);
-  };
+  }, installArgs);
+  await page
+    .evaluate(({ id, bindingName, markup }) => {
+      const existing = document.getElementById("applypilot-workday-overlay");
+      if (existing) {
+        existing.setAttribute("data-session-id", id);
+        return;
+      }
 
-  const markup = getWorkdayOverlayMarkup();
-  await page.addInitScript(installOverlay, { id: sessionId, bindingName: OVERLAY_BINDING, markup });
-  await page.evaluate(installOverlay, { id: sessionId, bindingName: OVERLAY_BINDING, markup }).catch(() => undefined);
+      const root = document.createElement("div");
+      root.id = "applypilot-workday-overlay";
+      root.setAttribute("data-session-id", id);
+      root.innerHTML = markup;
+
+      const status = root.querySelector(".status");
+      const details = root.querySelector(".details");
+      if (!(status instanceof HTMLElement) || !(details instanceof HTMLElement)) {
+        return;
+      }
+
+      const buttons = Array.from(root.querySelectorAll("button"));
+      for (const button of buttons) {
+        button.addEventListener("click", async () => {
+          const kind = button.getAttribute("data-kind");
+          const actionBinding = (window as unknown as Record<string, unknown>)[bindingName];
+          if (!kind || typeof actionBinding !== "function") return;
+
+          status.textContent =
+            kind === "fill-safe-fields"
+              ? "Filling safe fields"
+              : kind === "capture-page"
+                ? "Reading page"
+                : kind === "show-unresolved"
+                  ? "Needs review"
+                  : "Stopped";
+          details.textContent = "";
+
+          for (const currentButton of buttons) {
+            if (currentButton instanceof HTMLButtonElement) {
+              currentButton.disabled = true;
+            }
+          }
+
+          try {
+            const result = await (actionBinding as (payload: {
+              sessionId: string;
+              action: string;
+            }) => Promise<OverlayActionResult>)({
+              sessionId: id,
+              action: kind
+            });
+            status.textContent = result.status;
+            if (result.unresolved?.length) {
+              const list = document.createElement("ul");
+              for (const item of result.unresolved.slice(0, 8)) {
+                const entry = document.createElement("li");
+                entry.textContent = `${item.label}: ${item.reason}`;
+                list.appendChild(entry);
+              }
+              details.replaceChildren(list);
+            } else {
+              details.textContent = result.message;
+            }
+          } catch {
+            status.textContent = "Needs review";
+            details.textContent = "ApplyPilot could not finish that action on this page.";
+          } finally {
+            for (const currentButton of buttons) {
+              if (currentButton instanceof HTMLButtonElement) {
+                currentButton.disabled = false;
+              }
+            }
+          }
+        });
+      }
+
+      document.body.appendChild(root);
+    }, installArgs)
+    .catch(() => undefined);
   overlayPages.add(page);
 }

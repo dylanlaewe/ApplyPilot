@@ -90,6 +90,14 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
     case "address_line_2":
       return { value: knowledge.identity.addressLine2, source: "explicit_profile", reason: "Using your saved address line 2.", confidence: 0.97 };
     case "city":
+      if (!knowledge.identity.city) {
+        return {
+          value: "",
+          source: "unknown",
+          reason: "Your city is not saved yet, so ApplyPilot left this field unresolved instead of guessing from country or autocomplete results.",
+          confidence: 0.35
+        };
+      }
       return field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.role === "combobox"
         ? {
             value: getStructuredLocation(profile),
@@ -121,12 +129,26 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
         confidence: knowledge.professionalLinks.portfolioUrl ? 0.99 : 0.9
       };
     case "website":
-      return {
-        value: knowledge.professionalLinks.genericWebsiteFallbackValue,
-        source: "approved_fallback",
-        reason: "Using your configured website fallback preference.",
-        confidence: knowledge.professionalLinks.genericWebsiteFallbackValue ? 0.94 : 0.4
-      };
+      return knowledge.professionalLinks.personalWebsiteUrl
+        ? {
+            value: knowledge.professionalLinks.personalWebsiteUrl,
+            source: "explicit_profile",
+            reason: "Using your saved personal website.",
+            confidence: 0.99
+          }
+        : knowledge.professionalLinks.portfolioUrl
+          ? {
+              value: knowledge.professionalLinks.portfolioUrl,
+              source: "approved_fallback",
+              reason: "Using your portfolio as the approved website fallback.",
+              confidence: 0.94
+            }
+          : {
+              value: "",
+              source: "unknown",
+              reason: "No personal website or portfolio is saved, so ApplyPilot left the Website field blank.",
+              confidence: 0.4
+            };
     case "work_authorization":
       return {
         value:
@@ -275,10 +297,12 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
       if (allKnownEmployers.has(target)) {
         return { value: "yes", source: "derived_profile", reason: `Matched ${company} against your saved employment history.`, confidence: 0.94 };
       }
-      if (knowledge.employment.workHistoryComplete) {
-        return { value: "no", source: "derived_profile", reason: `Your saved work history is marked complete and does not include ${company}.`, confidence: 0.88 };
-      }
-      return { value: "", source: "unknown", reason: `Your work history is not marked complete, so ApplyPilot cannot safely answer about ${company}.`, confidence: 0.45 };
+      return {
+        value: "",
+        source: "unknown",
+        reason: `ApplyPilot needs an explicit saved answer or matching employment history before it can answer about ${company}.`,
+        confidence: 0.45
+      };
     }
     case "valid_drivers_license":
       return {

@@ -4,6 +4,7 @@ import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateAppl
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { resolveAutomationStrategyForPage } from "@/lib/atsStrategy";
+import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
 import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
@@ -151,11 +152,13 @@ async function scrollWorkdayFieldIntoView(page: Page, field: DetectedField) {
 async function prepareWorkdaySafeFields(
   sessionId: string,
   session: ApplicationSession,
-  isRetry: boolean
+  isRetry: boolean,
+  recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<PreparedWorkdayWaitingState | PreparedWorkdaySafeState> {
   const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, { navigate: false });
   await waitForWorkdayStablePage(runtime.page);
   await ensureWorkdayOverlayForSession(sessionId, runtime.page);
+  recordDiagnostic?.("page_resolved", runtime.page.url());
 
   const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
   if (prepared.waiting) {
@@ -181,6 +184,8 @@ async function prepareWorkdaySafeFields(
   });
   const metrics = await readWorkdayFieldMetrics(runtime.page, safeFields);
   const plan = buildWorkdayExecutionPlan(safeFields, metrics);
+  recordDiagnostic?.("plan_created", `${plan.length} planned field(s)`);
+  recordDiagnostic?.("safe_fields_count", String(safeFields.length));
 
   await updateApplicationSession(sessionId, (current) => ({
     ...current,
@@ -216,8 +221,13 @@ function unresolvedWorkdayFields(fields: DetectedField[]) {
     }));
 }
 
-export async function runWorkdaySafePass(sessionId: string, session: ApplicationSession, isRetry: boolean): Promise<ApplicationSession> {
-  const prepared = await prepareWorkdaySafeFields(sessionId, session, isRetry);
+export async function runWorkdaySafePass(
+  sessionId: string,
+  session: ApplicationSession,
+  isRetry: boolean,
+  recordDiagnostic?: (event: string, detail?: string) => void
+): Promise<ApplicationSession> {
+  const prepared = await prepareWorkdaySafeFields(sessionId, session, isRetry, recordDiagnostic);
   if ("waitingSession" in prepared) {
     return prepared.waitingSession;
   }
@@ -237,6 +247,7 @@ export async function runWorkdaySafePass(sessionId: string, session: Application
 
   const verifiedFieldKeys: string[] = [];
   try {
+    recordDiagnostic?.("pass_started");
     await updateApplicationSession(sessionId, (current) => ({
       ...current,
       status: "filling",
@@ -270,6 +281,7 @@ export async function runWorkdaySafePass(sessionId: string, session: Application
           field.status = "filled";
           field.verificationStatus = "verified";
           field.verificationMessage = verification.message;
+          field.commitState = verification.commitState;
           field.reason = `${field.reason} Filled during Workday safe mode.`;
           const fieldKey = buildWorkdayFieldKey(field);
           verifiedFieldKeys.push(fieldKey);
@@ -284,6 +296,7 @@ export async function runWorkdaySafePass(sessionId: string, session: Application
           field.status = "needs_review";
           field.verificationStatus = "failed";
           field.verificationMessage = humanizeError(error);
+          field.commitState = (error as { commitState?: DetectedField["commitState"] }).commitState ?? "unresolved";
           field.reason = "ApplyPilot does not support this control yet";
           auditEntries.push(
             createAuditEntry(sessionId, "needs_review", `Left ${field.label || field.name || "field"} for manual review.`, {
@@ -297,6 +310,7 @@ export async function runWorkdaySafePass(sessionId: string, session: Application
     });
 
     completeWorkdayPass(sessionId, verifiedFieldKeys);
+    recordDiagnostic?.("pass_finished");
 
     let updated = await saveDetectedFields(
       sessionId,
@@ -336,9 +350,15 @@ export async function runWorkdaySafePass(sessionId: string, session: Application
       })
     );
 
+    const committed = prepared.safeFields.filter((field) => field.status === "filled" && field.verificationStatus === "verified").length;
+    const unresolved = prepared.safeFields.filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status)).length;
+    recordDiagnostic?.("committed_count", String(committed));
+    recordDiagnostic?.("unresolved_count", String(unresolved));
+
     return updated;
   } catch (error) {
     failWorkdayPass(sessionId);
+    recordDiagnostic?.("failure_reason", humanizeError(error));
     throw error;
   }
 }
@@ -401,7 +421,20 @@ export async function ensureWorkdayOverlayForSession(sessionId: string, page: Pa
       };
     }
 
-    const updatedSession = await runWorkdaySafePass(targetSessionId, currentSession, true);
+    const eventLog: Array<{ event: string; detail?: string }> = [{ event: "overlay_clicked", detail: action }];
+    const recordDiagnostic = (event: string, detail?: string) => {
+      eventLog.push({ event, detail });
+    };
+    const updatedSession = await runWorkdaySafePass(targetSessionId, currentSession, true, recordDiagnostic);
+    await writeWorkdayOverlayDiagnostic({
+      sessionId: targetSessionId,
+      eventLog,
+      safeFieldsPlanned: Number(eventLog.find((entry) => entry.event === "plan_created")?.detail?.match(/\d+/)?.[0] || 0),
+      committed: updatedSession.detectedFields.filter((field) => field.status === "filled" && field.verificationStatus === "verified").length,
+      unresolved: updatedSession.detectedFields.filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
+        .length,
+      failureReason: eventLog.find((entry) => entry.event === "failure_reason")?.detail
+    }).catch(() => undefined);
     return {
       ok: true,
       status: updatedSession.fieldsFilledAndVerified > 0 ? "Finished" : "Needs review",

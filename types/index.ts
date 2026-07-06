@@ -48,6 +48,12 @@ export type ReviewCategory =
   | "error";
 
 export type VerificationStatus = "verified" | "failed" | "not_attempted";
+export type FieldCommitState =
+  | "committed"
+  | "visually_present_but_uncommitted"
+  | "validation_error_remains"
+  | "value_reverted"
+  | "unresolved";
 export type CaptchaDetectionStatus = "none" | "background_marker" | "confirmed_visible_challenge";
 export type AnswerSourceKind =
   | "explicit_profile"
@@ -754,6 +760,7 @@ export interface DetectedField {
   answerSource: AnswerSourceKind;
   verificationStatus: VerificationStatus;
   verificationMessage?: string;
+  commitState?: FieldCommitState;
   controlType?: ControlType;
   questionText?: string;
   placeholder?: string;

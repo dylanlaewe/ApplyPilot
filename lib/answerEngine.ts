@@ -96,7 +96,7 @@ function maybeMatchVisibleOption(intent: FieldIntent, field: RawScannedField, ca
   }
 
   if (intent === "city" || intent === "location" || intent === "full_location") {
-    return matchStructuredLocationOption(options, candidate) ?? matchTextOption(options, candidate);
+    return matchStructuredLocationOption(options, candidate);
   }
 
   if (intent === "phone_country_code") {
@@ -155,6 +155,31 @@ export function buildAnswerSuggestion({
 
   if (shortAnswer) {
     return shortAnswer;
+  }
+
+  if (intent === "previous_employment" && answerMatch.bestItem && answerMatch.bestScore >= 0.92) {
+    const normalizedAnswer = answerMatch.bestItem.answer.trim().toLowerCase();
+    if (normalizedAnswer === "yes" || normalizedAnswer === "no") {
+      const matched = field.selectOptions?.length
+        ? matchBooleanOption({
+            questionText,
+            options: field.selectOptions,
+            answer: normalizedAnswer as "yes" | "no",
+            intent
+          })
+        : null;
+
+      return {
+        suggestedValue: matched?.option || normalizedAnswer,
+        confidence: answerMatch.bestScore,
+        reason: `Using your explicitly saved employer-specific answer for ${answerMatch.bestItem.label}.`,
+        autoFillAllowed: answerMatch.bestItem.autoFillAllowed,
+        sensitivity: answerMatch.bestItem.sensitivity,
+        matchedOption: matched?.option,
+        answerSource: "answer_bank",
+        shortAnswer: null
+      };
+    }
   }
 
   if (intent === "why_interested" || intent === "tell_us_about_yourself" || intent === "unknown") {

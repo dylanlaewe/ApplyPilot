@@ -52,11 +52,16 @@ const WORKDAY_SAFE_TEXT_INTENTS = new Set<FieldIntent>([
   "phone_number",
   "full_phone_number",
   "phone_extension",
+  "address_line_1",
+  "address_line_2",
+  "street_address",
   "linkedin",
   "github",
   "portfolio",
   "website",
   "city",
+  "state",
+  "country",
   "postal_code"
 ]);
 
@@ -78,8 +83,6 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
 ]);
 
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
-  "country",
-  "state",
   "work_authorization",
   "work_authorization_category",
   "sponsorship",
@@ -97,9 +100,6 @@ const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "eeoc_disability",
   "desired_salary",
   "hourly_rate",
-  "street_address",
-  "address_line_1",
-  "address_line_2",
   "full_location"
 ]);
 
@@ -289,14 +289,13 @@ export function applyWorkdaySafeModeRules(
 
     if (next.intent === "country") {
       const exactCountryMatch = matchExactCountryAliasOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
-      if (exactCountryMatch) {
-        next.matchedOption = exactCountryMatch.option;
+      if (!isFillableWorkdayTextControl(next)) {
+        clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+        if (exactCountryMatch) {
+          next.matchedOption = exactCountryMatch.option;
+        }
+        return next;
       }
-      clearFieldForManualReview(next, "Needs an exact dropdown mapping");
-      if (exactCountryMatch) {
-        next.matchedOption = exactCountryMatch.option;
-      }
-      return next;
     }
 
     if (next.intent === "resume_upload" || next.type === "file") {

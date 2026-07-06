@@ -241,6 +241,15 @@ function parseStructuredLocation(value: string) {
   };
 }
 
+function looksLikeUnsafeCityToken(city: string, country: string) {
+  const normalizedCity = normalizeText(city);
+  const normalizedCountry = normalizeText(country);
+  if (!normalizedCity) return true;
+  if (["united states", "us", "usa", "u s a", "u s", "country"].includes(normalizedCity)) return true;
+  if (normalizedCountry && normalizedCountry.startsWith(normalizedCity) && normalizedCity.length <= 6) return true;
+  return false;
+}
+
 export function matchStructuredLocationOption(options: string[], expectedLocation: string) {
   const expected = parseStructuredLocation(expectedLocation);
   if (!expected.city) return null;
@@ -251,7 +260,21 @@ export function matchStructuredLocationOption(options: string[], expectedLocatio
 
   for (const option of options) {
     const parsed = parseStructuredLocation(option);
-    if (!parsed.city || parsed.city !== expected.city) continue;
+    if (!parsed.city) continue;
+    if (looksLikeUnsafeCityToken(parsed.city, parsed.country)) continue;
+
+    if (!parsed.state && !parsed.country) {
+      if (parsed.city === expected.city) {
+        return {
+          option,
+          confidence: 0.95,
+          reason: "Matched the exact city label without accepting a broader autocomplete guess."
+        };
+      }
+      continue;
+    }
+
+    if (parsed.city !== expected.city) continue;
 
     const optionStates = stateVariants(parsed.state);
     const stateMatches = !expectedStates.size || Array.from(expectedStates).some((state) => optionStates.has(state));

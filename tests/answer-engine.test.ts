@@ -431,7 +431,7 @@ test("matching employer history maps to Yes", () => {
   assert.equal(suggestion("previous_employment").suggestedValue, "yes");
 });
 
-test("non-matching employer with complete history maps to No", () => {
+test("non-matching employer with complete history remains unresolved until explicitly answered", () => {
   const result = buildAnswerSuggestion({
     intent: "previous_employment",
     field: field("previous_employment", {
@@ -440,7 +440,7 @@ test("non-matching employer with complete history maps to No", () => {
     profile: createProfile(),
     answerBank: []
   });
-  assert.equal(result.suggestedValue, "no");
+  assert.equal(result.suggestedValue, "");
 });
 
 test("non-matching employer with incomplete history remains unresolved", () => {
@@ -464,9 +464,22 @@ test("GitHub field only receives GitHub", () => {
   assert.equal(suggestion("github").suggestedValue, "https://github.com/avery-example");
 });
 
-test("generic Website uses configured fallback", () => {
+test("Website never falls back to LinkedIn when no personal site exists", () => {
+  const profile = createProfile({
+    identity: {
+      ...createProfile().identity,
+      website: "",
+      portfolio: "",
+      linkedin: "https://linkedin.com/in/avery-example"
+    }
+  });
+  const result = suggestion("website", profile);
+  assert.equal(result.suggestedValue, "");
+});
+
+test("Website uses a personal website or portfolio only", () => {
   const result = suggestion("website");
-  assert.equal(result.suggestedValue, "https://linkedin.com/in/avery-example");
+  assert.equal(result.suggestedValue, "https://avery.example.com");
 });
 
 test("optional Website stays blank when no fallback is configured", () => {
@@ -751,6 +764,18 @@ test("structured location matching rejects wrong city and country options", () =
     "Weymouth, MA, United States"
   );
   assert.equal(match?.option, "Weymouth, Massachusetts, United States");
+});
+
+test("structured location matching rejects misleading United autocomplete results", () => {
+  const match = matchStructuredLocationOption(
+    [
+      "United, Pennsylvania, United States",
+      "United States",
+      "United States Minor Outlying Islands"
+    ],
+    "Boston, MA, United States"
+  );
+  assert.equal(match, null);
 });
 
 test("state abbreviation matching resolves full state option labels", () => {

@@ -389,3 +389,311 @@ test("stale selectors recover by rescanning the current page before fill", async
   assert.equal(result.success, true);
   assert.equal(await page.locator("#school_field_rerendered").inputValue(), "Marist College");
 });
+
+test("phone formatting adapts to the target control before verification", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <label for="phone_field">Phone</label>
+    <input id="phone_field" type="tel" placeholder="(555) 555-5555" />
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Phone",
+      type: "tel",
+      selector: "#phone_field",
+      controlType: "text",
+      intent: "full_phone_number"
+    }),
+    "+1 7815551234"
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(await page.locator("#phone_field").inputValue(), "(781) 555-1234");
+});
+
+test("visible values without a committed framework update are rejected", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <div class="form-field">
+      <label for="street_address">Street address</label>
+      <input id="street_address" aria-describedby="street_address_error" />
+      <div id="street_address_error" class="field-error" role="alert">This field is required.</div>
+    </div>
+    <script>
+      const input = document.getElementById('street_address');
+      const error = document.getElementById('street_address_error');
+      input.addEventListener('input', () => {
+        input.setAttribute('data-visible-value', input.value);
+      });
+      input.addEventListener('change', () => {
+        error.textContent = 'This field is required.';
+        input.setAttribute('aria-invalid', 'true');
+        input.setCustomValidity('This field is required.');
+      });
+      input.addEventListener('blur', () => {
+        error.textContent = 'This field is required.';
+        input.setAttribute('aria-invalid', 'true');
+        input.setCustomValidity('This field is required.');
+      });
+    </script>
+  `);
+
+  await assert.rejects(
+    fillField(
+      page,
+      detectedField({
+        label: "Street address",
+        type: "text",
+        selector: "#street_address",
+        controlType: "text",
+        intent: "street_address"
+      }),
+      "123 Main St"
+    ),
+    /validation error|did not commit/i
+  );
+});
+
+test("Greenhouse-style controlled fields only pass when the form state commits and required errors clear", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <form id="greenhouse-form">
+      <div class="form-field" data-key="address">
+        <label for="street_address">Street address</label>
+        <input id="street_address" aria-describedby="street_address_error" />
+        <div id="street_address_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="city">
+        <label for="city_field">City</label>
+        <input id="city_field" aria-describedby="city_field_error" />
+        <div id="city_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="state">
+        <label for="state_field">State</label>
+        <select id="state_field" aria-describedby="state_field_error">
+          <option value="">Select</option>
+          <option value="MA">MA</option>
+          <option value="PA">PA</option>
+        </select>
+        <div id="state_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="zip">
+        <label for="zip_field">ZIP code</label>
+        <input id="zip_field" aria-describedby="zip_field_error" />
+        <div id="zip_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="workAuth">
+        <label for="work_auth_field">Work authorization</label>
+        <select id="work_auth_field" aria-describedby="work_auth_field_error">
+          <option value="">Select</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+        <div id="work_auth_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="clearance">
+        <label for="clearance_field">Security clearance</label>
+        <select id="clearance_field" aria-describedby="clearance_field_error">
+          <option value="">Select</option>
+          <option value="None">None</option>
+          <option value="Secret">Secret</option>
+        </select>
+        <div id="clearance_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="education">
+        <label for="education_field">Highest education</label>
+        <select id="education_field" aria-describedby="education_field_error">
+          <option value="">Select</option>
+          <option value="Bachelor's degree">Bachelor's degree</option>
+          <option value="Master's degree">Master's degree</option>
+        </select>
+        <div id="education_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="graduated">
+        <label for="graduated_field">Did you graduate?</label>
+        <select id="graduated_field" aria-describedby="graduated_field_error">
+          <option value="">Select</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+        <div id="graduated_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="linkedin">
+        <label for="linkedin_field">LinkedIn URL</label>
+        <input id="linkedin_field" aria-describedby="linkedin_field_error" />
+        <div id="linkedin_field_error" class="field-error" role="alert"></div>
+      </div>
+      <div class="form-field" data-key="website">
+        <label for="website_field">Website</label>
+        <input id="website_field" aria-describedby="website_field_error" />
+        <div id="website_field_error" class="field-error" role="alert"></div>
+      </div>
+    </form>
+    <script>
+      const state = {
+        address: '',
+        city: '',
+        state: '',
+        zip: '',
+        workAuth: '',
+        clearance: '',
+        education: '',
+        graduated: '',
+        linkedin: '',
+        website: ''
+      };
+      const mapping = {
+        street_address: 'address',
+        city_field: 'city',
+        state_field: 'state',
+        zip_field: 'zip',
+        work_auth_field: 'workAuth',
+        clearance_field: 'clearance',
+        education_field: 'education',
+        graduated_field: 'graduated',
+        linkedin_field: 'linkedin',
+        website_field: 'website'
+      };
+
+      const updateValidation = (element) => {
+        const key = mapping[element.id];
+        const error = document.getElementById(element.id + '_error');
+        const committed = state[key];
+        if (error) {
+          error.textContent = committed ? '' : 'This field is required.';
+        }
+        element.setAttribute('aria-invalid', committed ? 'false' : 'true');
+      };
+
+      for (const element of document.querySelectorAll('input, select')) {
+        updateValidation(element);
+        if (element.tagName === 'SELECT') {
+          element.addEventListener('change', () => {
+            state[mapping[element.id]] = element.value;
+            updateValidation(element);
+          });
+          element.addEventListener('blur', () => updateValidation(element));
+          continue;
+        }
+
+        element.addEventListener('input', () => {
+          element.setAttribute('data-visible-value', element.value);
+        });
+        element.addEventListener('change', () => {
+          state[mapping[element.id]] = element.value.trim();
+          updateValidation(element);
+        });
+        element.addEventListener('blur', () => {
+          state[mapping[element.id]] = element.value.trim();
+          updateValidation(element);
+        });
+      }
+
+      window.__getGreenhouseState = () => ({ ...state });
+    </script>
+  `);
+
+  const fields: Array<{ field: DetectedField; value: string }> = [
+    {
+      field: detectedField({ label: "Street address", type: "text", selector: "#street_address", controlType: "text", intent: "street_address" }),
+      value: "123 Main St"
+    },
+    {
+      field: detectedField({ label: "City", type: "text", selector: "#city_field", controlType: "text", intent: "city" }),
+      value: "Boston"
+    },
+    {
+      field: detectedField({ label: "State", type: "select-one", selector: "#state_field", controlType: "native_select", intent: "state" }),
+      value: "MA"
+    },
+    {
+      field: detectedField({ label: "ZIP code", type: "text", selector: "#zip_field", controlType: "text", intent: "postal_code" }),
+      value: "02118"
+    },
+    {
+      field: detectedField({
+        label: "Work authorization",
+        type: "select-one",
+        selector: "#work_auth_field",
+        controlType: "native_select",
+        intent: "work_authorization"
+      }),
+      value: "Yes"
+    },
+    {
+      field: detectedField({
+        label: "Security clearance",
+        type: "select-one",
+        selector: "#clearance_field",
+        controlType: "native_select",
+        intent: "security_clearance_level"
+      }),
+      value: "Secret"
+    },
+    {
+      field: detectedField({
+        label: "Highest education",
+        type: "select-one",
+        selector: "#education_field",
+        controlType: "native_select",
+        intent: "education_highest_completed"
+      }),
+      value: "Bachelor's degree"
+    },
+    {
+      field: detectedField({
+        label: "Did you graduate?",
+        type: "select-one",
+        selector: "#graduated_field",
+        controlType: "native_select",
+        intent: "graduated_question",
+        questionText: "Did you graduate?"
+      }),
+      value: "Yes"
+    },
+    {
+      field: detectedField({ label: "LinkedIn URL", type: "text", selector: "#linkedin_field", controlType: "text", intent: "linkedin" }),
+      value: "https://linkedin.com/in/avery-example"
+    },
+    {
+      field: detectedField({ label: "Website", type: "text", selector: "#website_field", controlType: "text", intent: "website" }),
+      value: "https://avery.example.com"
+    }
+  ];
+
+  for (const current of fields) {
+    const result = await fillField(page, current.field, current.value);
+    assert.equal(result.commitState, "committed");
+  }
+
+  const committedState = await page.evaluate(() => (window as typeof window & { __getGreenhouseState: () => Record<string, string> }).__getGreenhouseState());
+  assert.deepEqual(committedState, {
+    address: "123 Main St",
+    city: "Boston",
+    state: "MA",
+    zip: "02118",
+    workAuth: "Yes",
+    clearance: "Secret",
+    education: "Bachelor's degree",
+    graduated: "Yes",
+    linkedin: "https://linkedin.com/in/avery-example",
+    website: "https://avery.example.com"
+  });
+
+  for (const selector of [
+    "#street_address_error",
+    "#city_field_error",
+    "#state_field_error",
+    "#zip_field_error",
+    "#work_auth_field_error",
+    "#clearance_field_error",
+    "#education_field_error",
+    "#graduated_field_error",
+    "#linkedin_field_error",
+    "#website_field_error"
+  ]) {
+    assert.equal(await page.locator(selector).textContent(), "");
+  }
+});
