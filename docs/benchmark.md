@@ -1,43 +1,62 @@
-# Benchmark summary
+# Benchmarking
 
-## Status
+ApplyPilot now uses two benchmark tracks on purpose:
 
-This document summarizes the latest validated five-case live benchmark that was completed before the repository hygiene pass on July 1, 2026.
+- `npm run benchmark:regression`
+  Runs a deterministic local regression suite against sanitized fixture pages served from the repository. This is the stable gate for runtime regressions.
+- `npm run benchmark:live`
+  Runs the public live canary suite against active job URLs. This is useful for real-world drift detection, but it is not the only regression gate.
 
-The benchmark exercises public live application URLs and should be treated as a small-sample regression gate, not a guarantee of universal ATS coverage.
+`npm run benchmark:applications` remains as a compatibility alias for the live canary suite.
 
-## Scope
+## Deterministic Regression Suite
 
-- Cases: 5
-- ATS families covered: Greenhouse, Lever, Ashby, Workable, Jobvite
-- Final submissions performed: 0
+The deterministic suite:
 
-## Key results
+- Uses only locally controlled fixture pages.
+- Contains no private applicant data, credentials, or real resumes.
+- Never submits applications.
+- Exercises the real ApplyPilot runtime, including automatic page continuation.
+- Measures:
+  - Field detection
+  - Committed-value coverage
+  - Fill precision
+  - Required-error clearing
+  - Dropdown success
+  - Autocomplete success
+  - File-upload verification
+  - Repeatable-section success
+  - Page-transition continuation
+  - Severe incorrect answers
+  - Severe field failures
 
-- Completed cases: 5 / 5
-- Field detection recall: 1.000
-- Fill coverage: 1.000
-- Fill precision: 1.000
-- Safe answer coverage: 1.000
-- Dropdown success: 1.000
-- Autocomplete success: 1.000
-- File upload success: 1.000
-- User-expected coverage: 0.804
-- Severe incorrect answers: 0
-- Severe field failures: 0
+Covered ATS fixture families:
 
-## Generated-answer result
+- Greenhouse
+- Lever
+- Ashby
+- Workable
+- Jobvite
+- Workday
+- SmartRecruiters
+- iCIMS
+- Generic HTML forms
 
-The validated run included one grounded short-answer generation case.
+Artifacts are written under `debug/application-benchmark/regression/`.
 
-- Generatable questions detected: 1
-- Generated answers inserted: 1
-- Browser-verified generated answers: 1
-- Quality-approved generated answers: 1
-- Generated answers accepted without edit: 1
+## Live Canary Suite
 
-## Important notes
+The live suite:
 
-- Benchmark URLs can expire or change without warning.
-- The benchmark writes traces, screenshots, and detailed inventories locally under `debug/` and those artifacts are intentionally excluded from Git.
-- This summary is sanitized. It does not include raw traces, filled field inventories, or private local runtime data.
+- Uses public application URLs from `scripts/fixtures/application-benchmark-cases.json`.
+- Treats removed postings as `site_unavailable`, not deterministic runtime regressions.
+- Never submits applications.
+- Is intended to catch real-world drift in active ATS surfaces.
+
+Artifacts are written under `debug/application-benchmark/`.
+
+## Notes
+
+- Public benchmark URLs can expire or change without warning.
+- Synthetic benchmark files are stored locally under `data/` and are excluded from Git.
+- Debug artifacts, screenshots, traces, and any browser profile state are local-only and should never be committed.

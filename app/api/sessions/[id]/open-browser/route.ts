@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { appendAuditEntry, getApplicationSession, updateApplicationSession } from "@/lib/applications";
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
+import { ensureApplicationTransitionCoordinator } from "@/lib/applicationTransitionCoordinator";
 import { resolveAutomationStrategyForPage, toSessionAtsProvider } from "@/lib/atsStrategy";
 import { createAuditEntry } from "@/lib/auditLog";
 import { launchBrowserSession, summarizePageWarnings, waitForPageReadiness } from "@/lib/playwrightSession";
@@ -31,6 +32,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
       settings
     });
+    await ensureApplicationTransitionCoordinator(id, runtime.page);
     await ensureApplicationOverlayForSession(id, runtime.page);
     const pageSummary = await summarizePageWarnings(runtime.page);
     const metadata = await extractJobMetadata(runtime.page);

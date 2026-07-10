@@ -7,6 +7,7 @@
     "roleTitle": "Fullstack Software Engineer - Business Solutions",
     "url": "https://job-boards.greenhouse.io/dataiku/jobs/5963977004",
     "active": true,
+    "lastVerifiedAt": "2026-07-10",
     "tags": ["structured", "short-answer", "generatable"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -40,6 +41,7 @@
     "roleTitle": "Cybersecurity Internship Fall 2026 - Federal",
     "url": "https://jobs.lever.co/tevora/335ec3e2-c7ee-4e4c-b4a9-04428999e954/apply",
     "active": true,
+    "lastVerifiedAt": "2026-07-10",
     "tags": ["structured", "metadata", "file_upload"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -73,6 +75,7 @@
     "roleTitle": "Developer Intern, Trust Platforms - Fall 2026",
     "url": "https://jobs.ashbyhq.com/1password/8f8774dc-e400-48b1-8100-c6840b8eaed1/application",
     "active": true,
+    "lastVerifiedAt": "2026-07-10",
     "tags": ["structured", "short-answer", "missing-fact"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -95,6 +98,7 @@
     "roleTitle": "Camp Counselor",
     "url": "https://apply.workable.com/jcc-greater-boston/j/388A8F957D/",
     "active": true,
+    "lastVerifiedAt": "2026-07-10",
     "tags": ["structured", "autocomplete"],
     "expectedFieldTypes": ["text", "dropdown", "autocomplete", "file_upload"]
   },
@@ -139,6 +143,7 @@
     "roleTitle": "Java Software Engineer - Remote",
     "url": "https://jobs.jobvite.com/iboss/job/oev5zfw7/apply",
     "active": true,
+    "lastVerifiedAt": "2026-07-10",
     "tags": ["structured", "jobvite", "entry-action-free"],
     "expectedFieldTypes": ["text", "file_upload", "navigation"]
   },

@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
 import { ensureApplicationOverlay, registerApplicationOverlayBridge, type ApplicationOverlayActionResult } from "@/lib/applicationOverlay";
+import { ensureApplicationTransitionCoordinator } from "@/lib/applicationTransitionCoordinator";
 import { prepareDetectedFields } from "@/lib/autofillPreparation";
 import { createAuditEntry } from "@/lib/auditLog";
 import { submitCorrectionReport } from "@/lib/corrections";
@@ -279,6 +280,7 @@ export async function prepareUniversalOverlayOnOpen(sessionId: string) {
     navigate: false,
     reuseOpenPage: true
   });
+  await ensureApplicationTransitionCoordinator(sessionId, runtime.page);
   await ensureApplicationOverlayForSession(sessionId, runtime.page);
   return runtime;
 }

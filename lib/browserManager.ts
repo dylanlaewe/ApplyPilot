@@ -53,7 +53,7 @@ export async function getOrCreateBrowserContext() {
   }
 
   const { chromium } = await getPlaywright();
-  const useEphemeralTestContext = process.env.NODE_ENV === "test";
+  const useEphemeralTestContext = process.env.NODE_ENV === "test" || process.env.APPLYPILOT_HEADLESS === "1";
 
   if (useEphemeralTestContext) {
     state.browser = await chromium.launch({

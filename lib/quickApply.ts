@@ -2,6 +2,10 @@ import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateAppl
 import { prepareDetectedFields, applyWaitingUpdate } from "@/lib/autofillPreparation";
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
 import {
+  ensureApplicationTransitionCoordinator,
+  noteApplicationPassSettled
+} from "@/lib/applicationTransitionCoordinator";
+import {
   beginApplicationRuntimePass,
   completeApplicationRuntimePass,
   resumeApplicationRuntime
@@ -215,6 +219,7 @@ export async function runAutofillPass(
       navigate: false,
       reuseOpenPage: options.reuseOpenPage ?? settings.applicationBehavior.reuseBrowserWindow
     });
+    await ensureApplicationTransitionCoordinator(sessionId, runtime.page);
     await ensureApplicationOverlayForSession(sessionId, runtime.page);
     await waitForPageReadiness(runtime.page);
 
@@ -225,10 +230,14 @@ export async function runAutofillPass(
     });
 
     if (strategy.workdaySafeModeActive) {
-      return runWorkdaySafePass(sessionId, session, isRetry);
+      const updatedSession = await runWorkdaySafePass(sessionId, session, isRetry);
+      await noteApplicationPassSettled(sessionId, runtime.page, options.trigger ?? "manual");
+      return updatedSession;
     }
 
-    return runGenericAutofillPass(sessionId, session, isRetry);
+    const updatedSession = await runGenericAutofillPass(sessionId, session, isRetry);
+    await noteApplicationPassSettled(sessionId, runtime.page, options.trigger ?? "manual");
+    return updatedSession;
   } finally {
     completeApplicationRuntimePass(sessionId);
   }
@@ -248,6 +257,7 @@ export async function startQuickApply(sessionId: string): Promise<ApplicationSes
   }));
 
   const runtime = await launchBrowserSession(session.jobUrl, sessionId);
+  await ensureApplicationTransitionCoordinator(sessionId, runtime.page);
   await ensureApplicationOverlayForSession(sessionId, runtime.page);
   await updateApplicationSession(sessionId, (current) => ({
     ...current,
