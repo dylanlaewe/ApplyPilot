@@ -28,6 +28,7 @@ export type AutomationStrategy = {
   atsKind: AutomationAtsKind;
   strategyId: AutomationStrategyId;
   label: string;
+  shouldInjectApplicationOverlay: boolean;
   workdaySafeModeActive: boolean;
   shouldInjectWorkdayOverlay: boolean;
   shouldInitializeWorkdayCapture: boolean;
@@ -117,8 +118,9 @@ export function createDefaultAutomationStrategy(kind: AutomationAtsKind): Automa
           : kind === "smartrecruiters"
             ? "SmartRecruiters automation"
             : kind === "icims"
-              ? "iCIMS automation"
-              : `${kind[0].toUpperCase()}${kind.slice(1)} automation`,
+            ? "iCIMS automation"
+            : `${kind[0].toUpperCase()}${kind.slice(1)} automation`,
+    shouldInjectApplicationOverlay: true,
     workdaySafeModeActive: false,
     shouldInjectWorkdayOverlay: false,
     shouldInitializeWorkdayCapture: false,
@@ -170,6 +172,7 @@ export function resolveAutomationStrategy({
     atsKind: "workday",
     strategyId: "workday_safe_mode",
     label: "Workday Safe Mode",
+    shouldInjectApplicationOverlay: true,
     workdaySafeModeActive: true,
     shouldInjectWorkdayOverlay: true,
     shouldInitializeWorkdayCapture: true,

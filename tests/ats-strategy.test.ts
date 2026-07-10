@@ -24,6 +24,7 @@ test("non-Workday ATS families never select Workday Safe Mode", () => {
     assert.equal(detectAutomationAtsKind(current.url), current.expected);
     assert.equal(strategy.atsKind, current.expected);
     assert.equal(strategy.workdaySafeModeActive, false);
+    assert.equal(strategy.shouldInjectApplicationOverlay, true);
     assert.equal(strategy.shouldInjectWorkdayOverlay, false);
     assert.equal(strategy.shouldInitializeWorkdayCapture, false);
     assert.equal(strategy.shouldUseWorkdayOnePass, false);
@@ -64,6 +65,7 @@ test("verified Workday host and stable DOM clues select Workday Safe Mode", () =
 
   assert.equal(strategy.atsKind, "workday");
   assert.equal(strategy.strategyId, "workday_safe_mode");
+  assert.equal(strategy.shouldInjectApplicationOverlay, true);
   assert.equal(strategy.workdaySafeModeActive, true);
   assert.equal(strategy.shouldInjectWorkdayOverlay, true);
   assert.equal(strategy.shouldInitializeWorkdayCapture, true);

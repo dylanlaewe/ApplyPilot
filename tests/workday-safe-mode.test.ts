@@ -233,9 +233,10 @@ test("Workday execution plan runs top-to-bottom, scrolls once per section, and n
 
 test("overlay exposes only restrained actions with keyboard-friendly markup", () => {
   assert.deepEqual(WORKDAY_OVERLAY_ACTIONS, [
-    "Fill safe fields",
-    "Capture this page",
-    "Show unresolved fields",
+    "Fill this page",
+    "Review unresolved",
+    "Upload resume",
+    "Report a wrong answer",
     "Stop ApplyPilot"
   ]);
 

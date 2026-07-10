@@ -1035,6 +1035,7 @@ function isVisibleActionAllowed(label: string) {
 
 async function listVisibleActions(page: Awaited<ReturnType<typeof launchBrowserSession>>["page"]) {
   return page.evaluate(() => {
+    const overlaySelector = "#applypilot-overlay, #applypilot-workday-overlay";
     const candidates = Array.from(
       document.querySelectorAll(
         [
@@ -1050,6 +1051,9 @@ async function listVisibleActions(page: Awaited<ReturnType<typeof launchBrowserS
     return candidates
       .map((element, index) => {
         const el = element as HTMLElement;
+        if (el.closest(overlaySelector)) {
+          return null;
+        }
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
         if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || rect.width <= 0 || rect.height <= 0) {
@@ -2666,7 +2670,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

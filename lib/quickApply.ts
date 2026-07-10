@@ -1,5 +1,11 @@
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
 import { prepareDetectedFields, applyWaitingUpdate } from "@/lib/autofillPreparation";
+import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
+import {
+  beginApplicationRuntimePass,
+  completeApplicationRuntimePass,
+  resumeApplicationRuntime
+} from "@/lib/applicationRuntimeState";
 import { resolveAutomationStrategyForPage } from "@/lib/atsStrategy";
 import { createAuditEntry } from "@/lib/auditLog";
 import { writeGenericPassDiagnostic } from "@/lib/autofillDiagnostics";
@@ -173,30 +179,59 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   }));
 }
 
-export async function runAutofillPass(sessionId: string): Promise<ApplicationSession> {
+export async function runAutofillPass(
+  sessionId: string,
+  options: {
+    trigger?: "manual" | "automatic";
+    reuseOpenPage?: boolean;
+  } = {}
+): Promise<ApplicationSession> {
   const session = await getApplicationSession(sessionId);
   if (!session) {
     throw new Error("Session not found.");
   }
 
-  const isRetry = session.detectedFields.length > 0 || ["needs_review", "ready_for_submission", "waiting_for_user", "failed"].includes(session.status);
-  const settings = await getSettings();
-  const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, {
-    navigate: false
-  });
-  await waitForPageReadiness(runtime.page);
-
-  const strategy = await resolveAutomationStrategyForPage({
-    page: runtime.page,
-    url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
-    settings
-  });
-
-  if (strategy.workdaySafeModeActive) {
-    return runWorkdaySafePass(sessionId, session, isRetry);
+  if (options.trigger !== "automatic") {
+    resumeApplicationRuntime(sessionId);
   }
 
-  return runGenericAutofillPass(sessionId, session, isRetry);
+  const start = beginApplicationRuntimePass(sessionId);
+  if (!start.allowed) {
+    return updateApplicationSession(sessionId, (current) => ({
+      ...current,
+      status: "waiting_for_user",
+      statusMessage: start.reason === "stopped" ? "ApplyPilot is stopped on this page." : "ApplyPilot is already working on this page.",
+      nextAction:
+        start.reason === "stopped"
+          ? "Use Fill this page when you want ApplyPilot to continue."
+          : "Wait for the current page pass to finish before trying again."
+    }));
+  }
+
+  const isRetry = session.detectedFields.length > 0 || ["needs_review", "ready_for_submission", "waiting_for_user", "failed"].includes(session.status);
+  const settings = await getSettings();
+  try {
+    const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, {
+      navigate: false,
+      reuseOpenPage: options.reuseOpenPage ?? settings.applicationBehavior.reuseBrowserWindow
+    });
+    await ensureApplicationOverlayForSession(sessionId, runtime.page);
+    await waitForPageReadiness(runtime.page);
+
+    const strategy = await resolveAutomationStrategyForPage({
+      page: runtime.page,
+      url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
+      settings
+    });
+
+    if (strategy.workdaySafeModeActive) {
+      return runWorkdaySafePass(sessionId, session, isRetry);
+    }
+
+    return runGenericAutofillPass(sessionId, session, isRetry);
+  } finally {
+    completeApplicationRuntimePass(sessionId);
+  }
 }
 
 export async function startQuickApply(sessionId: string): Promise<ApplicationSession> {
@@ -212,7 +247,8 @@ export async function startQuickApply(sessionId: string): Promise<ApplicationSes
     nextAction: "ApplyPilot is opening the application window."
   }));
 
-  await launchBrowserSession(session.jobUrl, sessionId);
+  const runtime = await launchBrowserSession(session.jobUrl, sessionId);
+  await ensureApplicationOverlayForSession(sessionId, runtime.page);
   await updateApplicationSession(sessionId, (current) => ({
     ...current,
     status: "navigating",
@@ -221,5 +257,5 @@ export async function startQuickApply(sessionId: string): Promise<ApplicationSes
     browserStatus: "open"
   }));
 
-  return runAutofillPass(sessionId);
+  return runAutofillPass(sessionId, { trigger: "manual" });
 }

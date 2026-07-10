@@ -12,6 +12,7 @@ type BrowserFieldScanArgs = {
 
 const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
   const cleanText = (value) => (value ?? "").replace(/\s+/g, " ").trim();
+  const OVERLAY_ROOT_SELECTOR = "#applypilot-overlay, #applypilot-workday-overlay";
   const FIELD_CONTAINER_SELECTORS = [
     "fieldset",
     "[role='radiogroup']",
@@ -295,6 +296,7 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     try {
       if (!(element instanceof HTMLElement)) continue;
       if (element instanceof HTMLInputElement && element.type === "hidden") continue;
+      if (element.closest(OVERLAY_ROOT_SELECTOR)) continue;
 
       if (!isVisibleElement(element)) continue;
 

@@ -272,8 +272,12 @@ export async function detectCaptcha(page: Page): Promise<CaptchaDetectionResult>
 
 export async function detectFinalSubmitButtons(page: Page) {
   const buttons = await page.evaluate((patterns) => {
+    const overlaySelector = "#applypilot-overlay, #applypilot-workday-overlay";
     return Array.from(document.querySelectorAll("button, input[type='submit'], input[type='button']"))
       .filter((element) => {
+        if ((element as HTMLElement).closest(overlaySelector)) {
+          return false;
+        }
         const style = window.getComputedStyle(element);
         const rect = element.getBoundingClientRect();
         return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0;

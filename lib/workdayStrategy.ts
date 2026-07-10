@@ -1,15 +1,12 @@
 import type { Frame, Page } from "playwright";
 
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
+import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
-import { resolveAutomationStrategyForPage } from "@/lib/atsStrategy";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
 import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
-import { getSettings } from "@/lib/settings";
-import { saveWorkdayCapture } from "@/lib/workdayCapture";
-import { ensureWorkdayOverlay, registerWorkdayOverlayBridge } from "@/lib/workdayOverlay";
 import {
   applyWorkdaySafeModeRules,
   beginWorkdayPass,
@@ -364,84 +361,5 @@ export async function runWorkdaySafePass(
 }
 
 export async function ensureWorkdayOverlayForSession(sessionId: string, page: Page) {
-  const settings = await getSettings();
-  const strategy = await resolveAutomationStrategyForPage({
-    page,
-    url: page.url(),
-    settings
-  });
-
-  if (!strategy.shouldInjectWorkdayOverlay) {
-    return;
-  }
-
-  await registerWorkdayOverlayBridge(page, async ({ sessionId: targetSessionId, action }) => {
-    const currentSession = await getApplicationSession(targetSessionId);
-    if (!currentSession) {
-      return {
-        ok: false,
-        status: "Needs review",
-        message: "This application session is no longer available."
-      };
-    }
-
-    if (action === "stop") {
-      stopWorkdaySafeMode(targetSessionId);
-      await updateApplicationSession(targetSessionId, (existing) => ({
-        ...existing,
-        status: "waiting_for_user",
-        statusMessage: "ApplyPilot is stopped on this page.",
-        nextAction: "Use the browser control again if you want to restart a safe pass."
-      }));
-      return {
-        ok: true,
-        status: "Stopped",
-        message: "ApplyPilot stopped and will not run another pass until you ask."
-      };
-    }
-
-    if (action === "capture-page") {
-      const runtime = await launchBrowserSession(currentSession.currentPageUrl || currentSession.jobUrl, targetSessionId, { navigate: false });
-      const capture = await saveWorkdayCapture(runtime.page);
-      return {
-        ok: true,
-        status: "Finished",
-        message: `Saved a sanitized capture for the ${capture.capture.pageType} page.`
-      };
-    }
-
-    if (action === "show-unresolved") {
-      const updated = await prepareWorkdaySafeFields(targetSessionId, currentSession, true);
-      const fields = "waitingSession" in updated ? updated.waitingSession.detectedFields : updated.safeFields;
-      return {
-        ok: true,
-        status: fields.length ? "Needs review" : "Ready",
-        message: `${unresolvedWorkdayFields(fields).length} field${unresolvedWorkdayFields(fields).length === 1 ? "" : "s"} still need your review.`,
-        unresolved: unresolvedWorkdayFields(fields)
-      };
-    }
-
-    const eventLog: Array<{ event: string; detail?: string }> = [{ event: "overlay_clicked", detail: action }];
-    const recordDiagnostic = (event: string, detail?: string) => {
-      eventLog.push({ event, detail });
-    };
-    const updatedSession = await runWorkdaySafePass(targetSessionId, currentSession, true, recordDiagnostic);
-    await writeWorkdayOverlayDiagnostic({
-      sessionId: targetSessionId,
-      eventLog,
-      safeFieldsPlanned: Number(eventLog.find((entry) => entry.event === "plan_created")?.detail?.match(/\d+/)?.[0] || 0),
-      committed: updatedSession.detectedFields.filter((field) => field.status === "filled" && field.verificationStatus === "verified").length,
-      unresolved: updatedSession.detectedFields.filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
-        .length,
-      failureReason: eventLog.find((entry) => entry.event === "failure_reason")?.detail
-    }).catch(() => undefined);
-    return {
-      ok: true,
-      status: updatedSession.fieldsFilledAndVerified > 0 ? "Finished" : "Needs review",
-      message: summarizeWorkdayPassResult(updatedSession.detectedFields),
-      unresolved: unresolvedWorkdayFields(updatedSession.detectedFields)
-    };
-  });
-
-  await ensureWorkdayOverlay(page, sessionId);
+  await ensureApplicationOverlayForSession(sessionId, page);
 }

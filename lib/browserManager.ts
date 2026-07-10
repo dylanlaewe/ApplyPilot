@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+
 import type { Browser, BrowserContext, Page } from "playwright";
 
 type BrowserManagerState = {
@@ -19,6 +22,8 @@ const state =
   };
 
 store.__applyPilotBrowserManager = state;
+
+const BROWSER_PROFILE_DIR = path.join(process.cwd(), "data", "browser-profile");
 
 async function getPlaywright() {
   return import("playwright");
@@ -48,16 +53,40 @@ export async function getOrCreateBrowserContext() {
   }
 
   const { chromium } = await getPlaywright();
-  state.browser = await chromium.launch({
-    headless: process.env.NODE_ENV === "test",
-    slowMo: process.env.NODE_ENV === "test" ? 0 : 50
+  const useEphemeralTestContext = process.env.NODE_ENV === "test";
+
+  if (useEphemeralTestContext) {
+    state.browser = await chromium.launch({
+      headless: true,
+      slowMo: 0
+    });
+    state.browser.on("disconnected", () => {
+      state.browser = null;
+      state.context = null;
+      state.pages.clear();
+    });
+    state.context = await state.browser.newContext();
+    return state.context;
+  }
+
+  await mkdir(BROWSER_PROFILE_DIR, { recursive: true });
+  state.context = await chromium.launchPersistentContext(BROWSER_PROFILE_DIR, {
+    headless: false,
+    slowMo: 50
   });
-  state.browser.on("disconnected", () => {
+  state.browser = state.context.browser();
+  state.browser?.on("disconnected", () => {
     state.browser = null;
     state.context = null;
     state.pages.clear();
   });
-  state.context = await state.browser.newContext();
+  state.context.on("close", () => {
+    if (state.context) {
+      state.context = null;
+      state.browser = null;
+      state.pages.clear();
+    }
+  });
   return state.context;
 }
 

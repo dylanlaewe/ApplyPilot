@@ -3,7 +3,7 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 
 import { chromium, type Browser, type Page } from "playwright";
 
-import { ensureWorkdayOverlay, registerWorkdayOverlayBridge } from "@/lib/workdayOverlay";
+import { ensureApplicationOverlay, registerApplicationOverlayBridge } from "@/lib/applicationOverlay";
 
 let browser: Browser;
 let page: Page;
@@ -34,17 +34,29 @@ afterEach(async () => {
   }
 });
 
-test("Workday overlay click path reaches the bridge handler and updates the local status summary", async () => {
+test("universal overlay click path reaches the bridge handler and updates the local status summary", async () => {
   if (!browser) return test.skip(launchError?.message ?? "Playwright launch is unavailable in this sandboxed test environment.");
-  await page.setContent("<html><body><main>Workday form</main></body></html>");
+  await page.setContent("<html><body><main>Application form</main><input data-applypilot-field-id=\"field-1\" id=\"email\" aria-label=\"Email\" value=\"wrong@example.com\" /></body></html>");
 
   const actions: string[] = [];
-  await registerWorkdayOverlayBridge(page, async ({ sessionId, action }) => {
+  await registerApplicationOverlayBridge(page, async ({ sessionId, action, correction }) => {
     actions.push(`${sessionId}:${action}`);
+    if (action === "report-wrong-answer") {
+      assert.equal(correction?.fieldSelector, '[data-applypilot-field-id="field-1"]');
+      assert.equal(correction?.visibleFieldQuestion, "Email");
+      assert.equal(correction?.enteredValue, "wrong@example.com");
+      assert.equal(correction?.correctedValue, "right@example.com");
+      return {
+        ok: true,
+        status: "Finished",
+        message: "Correction saved locally."
+      };
+    }
+
     return {
       ok: true,
       status: "Finished",
-      message: "3 safe fields completed / 2 fields need review / No uncertain answers were selected",
+      message: "14 fields completed / 3 need your input / Ready for review",
       unresolved: [
         { label: "Country", reason: "Needs an exact dropdown mapping" },
         { label: "Work authorization", reason: "Sensitive question requires your review" }
@@ -52,17 +64,47 @@ test("Workday overlay click path reaches the bridge handler and updates the loca
     };
   });
 
-  await ensureWorkdayOverlay(page, "session-workday");
-  await page.locator("#applypilot-workday-overlay summary").click();
-  await page.getByRole("button", { name: "Fill safe fields" }).click();
+  await ensureApplicationOverlay(page, "session-workday");
+  await page.locator("#applypilot-overlay summary").click();
+  await page.getByRole("button", { name: "Fill this page" }).click();
 
   await page.waitForFunction(() => {
-    const status = document.querySelector("#applypilot-workday-overlay .status");
+    const status = document.querySelector("#applypilot-overlay .status");
     return status?.textContent === "Finished";
   });
 
-  assert.deepEqual(actions, ["session-workday:fill-safe-fields"]);
-  assert.equal((await page.locator("#applypilot-workday-overlay .status").textContent()) ?? "", "Finished");
-  assert.match((await page.locator("#applypilot-workday-overlay .details").textContent()) ?? "", /Country: Needs an exact dropdown mapping/);
-  assert.match((await page.locator("#applypilot-workday-overlay .details").textContent()) ?? "", /Work authorization: Sensitive question requires your review/);
+  assert.deepEqual(actions, ["session-workday:fill-page"]);
+  assert.equal((await page.locator("#applypilot-overlay .status").textContent()) ?? "", "Finished");
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Country: Needs an exact dropdown mapping/);
+  assert.match((await page.locator("#applypilot-overlay .result").textContent()) ?? "", /14 fields completed/);
+
+  await page.locator("#email").focus();
+  await page.getByRole("button", { name: "Report a wrong answer" }).click();
+  await page.getByLabel("Correct value").fill("right@example.com");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await page.waitForFunction(() => {
+    const result = document.querySelector("#applypilot-overlay .result");
+    return /Correction saved locally/.test(result?.textContent || "");
+  });
+  assert.deepEqual(actions, ["session-workday:fill-page", "session-workday:report-wrong-answer"]);
+});
+
+test("universal overlay does not duplicate itself and survives navigation", async () => {
+  if (!browser) return test.skip(launchError?.message ?? "Playwright launch is unavailable in this sandboxed test environment.");
+  await registerApplicationOverlayBridge(page, async () => ({
+    ok: true,
+    status: "Ready",
+    message: "Ready"
+  }));
+
+  await page.setContent("<html><body><main>Page one</main></body></html>");
+  await ensureApplicationOverlay(page, "session-universal");
+  await ensureApplicationOverlay(page, "session-universal");
+
+  assert.equal(await page.locator("#applypilot-overlay").count(), 1);
+
+  await page.goto("data:text/html,<html><body><main>Page two</main></body></html>", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.querySelectorAll("#applypilot-overlay").length === 1);
+  assert.equal(await page.locator("#applypilot-overlay").count(), 1);
+  assert.equal(await page.locator("#applypilot-overlay .summary-status").textContent(), "Ready");
 });

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { appendAuditEntry, getApplicationSession, updateApplicationSession } from "@/lib/applications";
+import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
 import { resolveAutomationStrategyForPage, toSessionAtsProvider } from "@/lib/atsStrategy";
 import { createAuditEntry } from "@/lib/auditLog";
 import { launchBrowserSession, summarizePageWarnings, waitForPageReadiness } from "@/lib/playwrightSession";
 import { extractJobMetadata } from "@/lib/jobMetadata";
-import { ensureWorkdayOverlayForSession } from "@/lib/workdayStrategy";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 
@@ -31,9 +31,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
       settings
     });
-    if (strategy.shouldInjectWorkdayOverlay) {
-      await ensureWorkdayOverlayForSession(id, runtime.page);
-    }
+    await ensureApplicationOverlayForSession(id, runtime.page);
     const pageSummary = await summarizePageWarnings(runtime.page);
     const metadata = await extractJobMetadata(runtime.page);
 
@@ -53,9 +51,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       nextAction:
         current.status === "ready_for_submission" || current.status === "needs_review"
           ? current.nextAction
-          : strategy.workdaySafeModeActive
-            ? "Use the ApplyPilot control in the application window when the Workday form is visible."
-            : "Complete any manual page steps in the browser, then try this page again when the form is visible.",
+          : "Use the ApplyPilot control in the application window when the form is visible.",
       atsProvider: toSessionAtsProvider(strategy.atsKind),
       company: metadata.company || current.company,
       roleTitle: metadata.roleTitle || current.roleTitle,
