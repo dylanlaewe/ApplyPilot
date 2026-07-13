@@ -539,66 +539,74 @@ export async function submitCorrectionReport({
     });
   }
 
-  const updatedSession = await updateApplicationSession(sessionId, (current) => {
-    const telemetry = current.dogfoodTelemetry ?? {
-      sessionStartedAt: current.createdAt,
-      applicationFormReachedAt: "",
-      initialAutofillCompletedAt: "",
-      userReviewCompletedAt: "",
-      readyForSubmissionAt: "",
-      fieldsDetectedAtLastPass: current.fieldsDetected,
-      fieldsFilledVerifiedAtLastPass: current.fieldsFilledAndVerified,
-      fieldsUnresolvedAtLastPass: current.fieldsUnresolved,
-      userCorrections: 0,
-      manualAnswers: 0,
-      autofillRetries: 0
-    };
+  let updatedSession = session;
+  let sessionWithAudit = session;
+  try {
+    updatedSession = await updateApplicationSession(sessionId, (current) => {
+      const telemetry = current.dogfoodTelemetry ?? {
+        sessionStartedAt: current.createdAt,
+        applicationFormReachedAt: "",
+        initialAutofillCompletedAt: "",
+        userReviewCompletedAt: "",
+        readyForSubmissionAt: "",
+        fieldsDetectedAtLastPass: current.fieldsDetected,
+        fieldsFilledVerifiedAtLastPass: current.fieldsFilledAndVerified,
+        fieldsUnresolvedAtLastPass: current.fieldsUnresolved,
+        userCorrections: 0,
+        manualAnswers: 0,
+        autofillRetries: 0
+      };
 
-    return {
-      ...current,
-      detectedFields: current.detectedFields.map((entry) =>
-        entry.id === fieldId
-          ? {
-              ...entry,
-              suggestedValue: corrected,
-              detectedValue: entry.status === "filled" ? corrected : entry.detectedValue,
-              reason: "Corrected after dogfooding feedback.",
-              verificationMessage:
-                entry.status === "filled"
-                  ? "This value was corrected manually after ApplyPilot filled it."
-                  : entry.verificationMessage
-            }
-          : entry
-      ),
-      dogfoodTelemetry: {
-        ...telemetry,
-        userCorrections: telemetry.userCorrections + 1
-      }
-    };
-  });
+      return {
+        ...current,
+        detectedFields: current.detectedFields.map((entry) =>
+          entry.id === fieldId
+            ? {
+                ...entry,
+                suggestedValue: corrected,
+                detectedValue: entry.status === "filled" ? corrected : entry.detectedValue,
+                reason: "Corrected after dogfooding feedback.",
+                verificationMessage:
+                  entry.status === "filled"
+                    ? "This value was corrected manually after ApplyPilot filled it."
+                    : entry.verificationMessage
+              }
+            : entry
+        ),
+        dogfoodTelemetry: {
+          ...telemetry,
+          userCorrections: telemetry.userCorrections + 1
+        }
+      };
+    });
 
-  let sessionWithAudit = await appendAuditEntry(
-    sessionId,
-    createAuditEntry(sessionId, "correction_reported", `Recorded a correction for ${report.visibleFieldQuestion}.`, {
-      fieldId,
-      reason: `Stored locally as ${report.classification.replaceAll("_", " ")}.`
-    })
-  );
-
-  if (learningApproved && (profileUpdated || answerSaved || regressionLogged)) {
     sessionWithAudit = await appendAuditEntry(
       sessionId,
-      createAuditEntry(sessionId, "correction_learned", `Saved reusable learning from ${report.visibleFieldQuestion}.`, {
+      createAuditEntry(sessionId, "correction_reported", `Recorded a correction for ${report.visibleFieldQuestion}.`, {
         fieldId,
-        reason: [
-          profileUpdated ? "profile updated" : "",
-          answerSaved ? "saved answer updated" : "",
-          regressionLogged ? "regression logged" : ""
-        ]
-          .filter(Boolean)
-          .join(", ")
+        reason: `Stored locally as ${report.classification.replaceAll("_", " ")}.`
       })
     );
+
+    if (learningApproved && (profileUpdated || answerSaved || regressionLogged)) {
+      sessionWithAudit = await appendAuditEntry(
+        sessionId,
+        createAuditEntry(sessionId, "correction_learned", `Saved reusable learning from ${report.visibleFieldQuestion}.`, {
+          fieldId,
+          reason: [
+            profileUpdated ? "profile updated" : "",
+            answerSaved ? "saved answer updated" : "",
+            regressionLogged ? "regression logged" : ""
+          ]
+            .filter(Boolean)
+            .join(", ")
+        })
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "Session not found.") {
+      throw error;
+    }
   }
 
   return {

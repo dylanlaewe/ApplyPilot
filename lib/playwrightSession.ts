@@ -542,6 +542,133 @@ export async function handleFileUpload(frame: Frame, selector: string, filePath:
   await frame.locator(selector).setInputFiles(filePath);
 }
 
+async function resolveTriggeredUploadInput(frame: Frame, field: DetectedField) {
+  return frame
+    .evaluate(({ selector, intent }) => {
+      const isVisible = (candidate: Element | null) => {
+        if (!(candidate instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(candidate);
+        const rect = candidate.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      const setSelectorId = (candidate: Element | null) => {
+        if (!(candidate instanceof HTMLElement)) return "";
+        const id = candidate.getAttribute("data-applypilot-upload-id") || `applypilot-upload-${Math.random().toString(36).slice(2)}`;
+        candidate.setAttribute("data-applypilot-upload-id", id);
+        return `[data-applypilot-upload-id="${id}"]`;
+      };
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) return "";
+      const wrapper =
+        element.closest(
+          [
+            "[data-applypilot-group-id]",
+            "[role='dialog']",
+            "[role='menu']",
+            "[role='listbox']",
+            ".application-question",
+            ".form-field",
+            ".form-group",
+            ".field"
+          ].join(", ")
+        ) ?? element.parentElement;
+
+      const linkedLabel = Array.from(document.querySelectorAll("label[for]")).find((label) => {
+        if (!isVisible(label)) return false;
+        const text = (label.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const targetId = label.getAttribute("for");
+        const target = targetId ? document.getElementById(targetId) : null;
+        return (
+          Boolean(target && target.matches('input[type="file"]')) &&
+          /file|upload|resume|cv|cover letter/.test(text) &&
+          (!wrapper || wrapper.contains(label) || wrapper.contains(target))
+        );
+      });
+      if (linkedLabel) {
+        const targetId = linkedLabel.getAttribute("for");
+        const target = targetId ? document.getElementById(targetId) : null;
+        if (target instanceof HTMLElement) {
+          return setSelectorId(target);
+        }
+      }
+
+      const localInput = wrapper?.querySelector('input[type="file"]') ?? null;
+      if (localInput instanceof HTMLElement) {
+        return setSelectorId(localInput);
+      }
+
+      const pageInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+      if (pageInputs.length === 1 && pageInputs[0] instanceof HTMLElement) {
+        return setSelectorId(pageInputs[0]);
+      }
+
+      if (pageInputs.length) {
+        const preferredIndex = intent === "cover_letter_upload" ? pageInputs.length - 1 : 0;
+        const preferred = pageInputs[preferredIndex];
+        if (preferred instanceof HTMLElement) {
+          return setSelectorId(preferred);
+        }
+      }
+
+      return "";
+    }, { selector: field.selector, intent: field.intent })
+    .catch(() => "");
+}
+
+async function triggerUploadControl(page: Page, field: DetectedField, filePath: string) {
+  const frame = resolveFrame(page, field);
+  const locator = frame.locator(field.selector).first();
+  const fileChooserPromise = page
+    .waitForEvent("filechooser", { timeout: 1_500 })
+    .then(async (chooser) => {
+      await chooser.setFiles(filePath);
+      return true;
+    })
+    .catch(() => false);
+
+  try {
+    await locator.click({ timeout: 10_000 });
+  } catch {
+    await locator.click({ timeout: 10_000, force: true }).catch(async () => {
+      await locator.evaluate((element) => {
+        if (element instanceof HTMLElement) {
+          element.click();
+        }
+      });
+    });
+  }
+
+  if (await fileChooserPromise) {
+    return;
+  }
+
+  const pageUploadInputs = frame.locator('input[type="file"]');
+  const inputCount = await pageUploadInputs.count().catch(() => 0);
+  if (inputCount > 0) {
+    const preferredIndex = field.intent === "cover_letter_upload" ? inputCount - 1 : 0;
+    const targetInput = pageUploadInputs.nth(preferredIndex);
+    const selector = await targetInput
+      .evaluate((element) => {
+        if (!(element instanceof HTMLElement)) return "";
+        const id = element.getAttribute("data-applypilot-upload-id") || `applypilot-upload-${Math.random().toString(36).slice(2)}`;
+        element.setAttribute("data-applypilot-upload-id", id);
+        return `[data-applypilot-upload-id="${id}"]`;
+      })
+      .catch(() => "");
+    if (selector) {
+      await handleFileUpload(frame, selector, filePath);
+      return;
+    }
+  }
+
+  const revealedInputSelector = await resolveTriggeredUploadInput(frame, field);
+  if (!revealedInputSelector) {
+    throw new Error("ApplyPilot could not find the file picker for this upload control.");
+  }
+
+  await handleFileUpload(frame, revealedInputSelector, filePath);
+}
+
 async function fillTextControl(
   frame: Frame,
   field: DetectedField,
@@ -722,7 +849,13 @@ export async function fillField(
   }
 
   const performFill = async () => {
-    if (field.type === "select-one" || field.type === "select-multiple" || field.controlType === "native_select") {
+    if (field.intent === "resume_upload" || field.intent === "cover_letter_upload") {
+      if (field.type === "file") {
+        await handleFileUpload(frame, field.selector, value);
+      } else {
+        await triggerUploadControl(page, field, value);
+      }
+    } else if (field.type === "select-one" || field.type === "select-multiple" || field.controlType === "native_select") {
       await handleSelectDropdown(frame, field.selector, value);
     } else if (field.type === "radio") {
       await handleRadioGroup(frame, field, value);

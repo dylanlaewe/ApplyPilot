@@ -84,6 +84,94 @@ function renderTransitionFixture() {
 </html>`;
 }
 
+function renderSameUrlTransitionFixture() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Same URL Fixture</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; }
+      form { display: grid; gap: 16px; max-width: 560px; }
+      label { display: grid; gap: 6px; font-weight: 600; }
+      input { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; }
+      button { width: fit-content; padding: 10px 14px; border: 0; border-radius: 999px; background: #0f172a; color: white; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      const root = document.getElementById("app");
+
+      function renderProfileStep() {
+        root.innerHTML = \`
+          <section data-step="profile">
+            <h1>Profile Step</h1>
+            <form>
+              <label for="full_name">Full Name<input id="full_name" name="full_name" autocomplete="name" required /></label>
+              <label for="email">Email<input id="email" name="email" type="email" autocomplete="email" required /></label>
+              <button type="button" id="next">Continue</button>
+            </form>
+          </section>
+        \`;
+        document.getElementById("next").addEventListener("click", () => {
+          setTimeout(() => {
+            renderDetailsStep();
+          }, 50);
+        });
+      }
+
+      function renderDetailsStep() {
+        root.innerHTML = \`
+          <section data-step="details">
+            <h1>Details Step</h1>
+            <form>
+              <label for="city">City<input id="city" name="city" autocomplete="address-level2" required /></label>
+              <label for="linkedin">LinkedIn<input id="linkedin" name="linkedin" type="url" autocomplete="url" /></label>
+            </form>
+          </section>
+        \`;
+      }
+
+      renderProfileStep();
+    </script>
+  </body>
+</html>`;
+}
+
+function renderFullNavigationFixture(step: "one" | "two") {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Full Navigation Fixture</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; }
+      form { display: grid; gap: 16px; max-width: 560px; }
+      label { display: grid; gap: 6px; font-weight: 600; }
+      input { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; }
+      a { width: fit-content; padding: 10px 14px; border-radius: 999px; background: #0f172a; color: white; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    ${
+      step === "one"
+        ? `<h1>Navigation Step 1</h1>
+           <form>
+             <label for="first_name">First Name<input id="first_name" name="first_name" autocomplete="given-name" required /></label>
+             <label for="email">Email<input id="email" name="email" type="email" autocomplete="email" required /></label>
+             <a id="next" href="/full-nav/step-2">Continue</a>
+           </form>`
+        : `<h1>Navigation Step 2</h1>
+           <form>
+             <label for="city">City<input id="city" name="city" autocomplete="address-level2" required /></label>
+             <label for="linkedin">LinkedIn<input id="linkedin" name="linkedin" type="url" /></label>
+           </form>`
+    }
+  </body>
+</html>`;
+}
+
 async function backupStorage() {
   await Promise.all(
     storageFiles.map(async (fileName) => {
@@ -147,6 +235,19 @@ async function waitFor(assertion: () => Promise<void>, timeoutMs = 7_500) {
 before(async () => {
   server = http.createServer((request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/same-url") {
+      response.end(renderSameUrlTransitionFixture());
+      return;
+    }
+    if (url.pathname === "/full-nav") {
+      response.end(renderFullNavigationFixture("one"));
+      return;
+    }
+    if (url.pathname === "/full-nav/step-2") {
+      response.end(renderFullNavigationFixture("two"));
+      return;
+    }
     response.end(renderTransitionFixture());
   });
 
@@ -226,4 +327,72 @@ test("manual step navigation triggers exactly one automatic follow-up autofill p
   assert.equal(settled.currentPageNumber >= 2, true);
   assert.equal(settled.dogfoodTelemetry?.autofillRetries, 1);
   assert.ok(getDataDirPath().includes("/data"));
+});
+
+test("same-url container replacement triggers one automatic follow-up pass", async () => {
+  const { createApplicationSession } = await import("@/lib/applications");
+  const session = await createApplicationSession({
+    company: "Fixture Co",
+    roleTitle: "Platform Engineer",
+    jobUrl: `${baseUrl}/same-url`,
+    source: "deterministic-regression",
+    notes: ""
+  });
+
+  const firstPass = await runAutofillPass(session.id, {
+    trigger: "manual",
+    reuseOpenPage: false
+  });
+
+  assert.equal(firstPass.detectedFields.some((field) => field.label === "Full Name" && field.status === "filled"), true);
+  assert.equal(firstPass.detectedFields.some((field) => field.label === "Email" && field.status === "filled"), true);
+
+  const runtime = getBrowserSession(session.id);
+  assert.ok(runtime, "Expected an open browser session.");
+  await runtime?.page.locator("#next").click();
+
+  await waitFor(async () => {
+    const updated = await getApplicationSession(session.id);
+    assert.ok(updated);
+    assert.equal(updated.detectedFields.some((field) => field.label === "City" && field.status === "filled"), true);
+    assert.equal(updated.detectedFields.some((field) => /linkedin/i.test(field.label) && field.status === "filled"), true);
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1_400));
+
+  const settled = await getApplicationSession(session.id);
+  assert.ok(settled);
+  const autofillRuns = settled.auditLog.filter((entry) => entry.action === "autofill_run_completed");
+  assert.equal(autofillRuns.length, 2);
+});
+
+test("full navigation transitions continue automatically after a URL change", async () => {
+  const { createApplicationSession } = await import("@/lib/applications");
+  const session = await createApplicationSession({
+    company: "Fixture Co",
+    roleTitle: "Product Engineer",
+    jobUrl: `${baseUrl}/full-nav`,
+    source: "deterministic-regression",
+    notes: ""
+  });
+
+  const firstPass = await runAutofillPass(session.id, {
+    trigger: "manual",
+    reuseOpenPage: false
+  });
+
+  assert.equal(firstPass.detectedFields.some((field) => field.label === "First Name" && field.status === "filled"), true);
+  assert.equal(firstPass.detectedFields.some((field) => field.label === "Email" && field.status === "filled"), true);
+
+  const runtime = getBrowserSession(session.id);
+  assert.ok(runtime, "Expected an open browser session.");
+  await runtime?.page.locator("#next").click();
+
+  await waitFor(async () => {
+    const updated = await getApplicationSession(session.id);
+    assert.ok(updated);
+    assert.equal(updated.currentPageUrl.includes("/full-nav/step-2"), true);
+    assert.equal(updated.detectedFields.some((field) => field.label === "City" && field.status === "filled"), true);
+    assert.equal(updated.detectedFields.some((field) => /linkedin/i.test(field.label) && field.status === "filled"), true);
+  });
 });

@@ -2,6 +2,7 @@ import type { BrowserContext, Page } from "playwright";
 
 import { getApplicationRuntimeState } from "@/lib/applicationRuntimeState";
 import { getApplicationSession } from "@/lib/applications";
+import { scanVisibleFields } from "@/lib/playwrightSession";
 
 type TransitionState = {
   page: Page | null;
@@ -11,6 +12,8 @@ type TransitionState = {
   lastTriggeredIdentity: string;
   armed: boolean;
   processing: boolean;
+  pendingSignal: boolean;
+  eventLog: Array<{ event: string; detail?: string; at: string }>;
 };
 
 type TransitionSignalPayload = {
@@ -160,75 +163,100 @@ function getOrCreateState(sessionId: string) {
     lastObservedIdentity: "",
     lastTriggeredIdentity: "",
     armed: false,
-    processing: false
+    processing: false,
+    pendingSignal: false,
+    eventLog: []
   };
   transitionStates.set(sessionId, next);
   return next;
 }
 
+function pushTransitionEvent(sessionId: string, event: string, detail?: string) {
+  const state = getOrCreateState(sessionId);
+  state.eventLog.push({
+    event,
+    detail,
+    at: new Date().toISOString()
+  });
+  if (state.eventLog.length > 80) {
+    state.eventLog.splice(0, state.eventLog.length - 80);
+  }
+}
+
+export function recordApplicationTransitionEvent(sessionId: string, event: string, detail?: string) {
+  pushTransitionEvent(sessionId, event, detail);
+}
+
 async function readApplicationPageIdentity(page: Page): Promise<PageIdentitySnapshot> {
-  return page
-    .evaluate(() => {
-      const overlaySelector = "#applypilot-overlay, #applypilot-workday-overlay";
-      const readText = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
-      const isVisible = (element: Element | null) => {
+  const url = page.url();
+
+  const headingLocator = page.locator("h1, h2, legend, [data-automation-id='pageHeader'], [data-automation-id='titleText']");
+  const headingCount = await headingLocator.count().catch(() => 0);
+  let heading = "";
+  for (let index = 0; index < Math.min(headingCount, 12); index += 1) {
+    const candidate = headingLocator.nth(index);
+    const visible = await candidate.isVisible().catch(() => false);
+    if (!visible) continue;
+    heading = ((await candidate.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    if (heading) break;
+  }
+
+  const visibleFields = await scanVisibleFields(page).catch(() => []);
+  const controlLabels = visibleFields
+    .map((field) => field.label || field.ariaLabel || field.placeholder || field.name || "")
+    .map((value) => value.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 14);
+
+  const formContainerFingerprint = await page
+    .locator("form, section, fieldset, [role='group']")
+    .evaluateAll((elements) => {
+      const isVisible = (element: Element) => {
         if (!(element instanceof HTMLElement)) return false;
-        if (element.closest(overlaySelector)) return false;
         const style = window.getComputedStyle(element);
         const rect = element.getBoundingClientRect();
         return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0;
       };
 
-      const heading = readText(
-        Array.from(document.querySelectorAll("h1, h2, legend, [data-automation-id='pageHeader'], [data-automation-id='titleText']"))
-          .find((candidate) => isVisible(candidate))?.textContent
-      );
-
-      const controlLabels = Array.from(
-        document.querySelectorAll(
-          [
-            "input:not([type='hidden'])",
-            "select",
-            "textarea",
-            "[role='combobox']",
-            "button",
-            "[role='button']"
-          ].join(", ")
-        )
-      )
+      return elements
+        .filter((element) => isVisible(element))
+        .slice(0, 4)
         .map((element) => {
-          if (!isVisible(element)) return "";
-          const id = element.getAttribute("id");
-          const explicit = id ? document.querySelector(`label[for="${id}"]`) : null;
-          const wrappedLabel = element.closest("label");
-          return readText(
-            explicit?.textContent ||
-              wrappedLabel?.textContent ||
-              element.getAttribute("aria-label") ||
-              element.getAttribute("placeholder") ||
-              element.textContent ||
-              ""
-          );
+          const headingText =
+            (
+              element.querySelector("h1, h2, h3, legend, [data-automation-id='sectionHeader']")?.textContent || ""
+            ).replace(/\s+/g, " ").trim();
+          const controlCount = element.querySelectorAll("input:not([type='hidden']), select, textarea, [role='combobox']").length;
+          return `${headingText}:${controlCount}`;
         })
         .filter(Boolean)
-        .slice(0, 14);
-
-      const url = window.location.href;
-      return {
-        url,
-        heading,
-        controlCount: controlLabels.length,
-        controlLabels,
-        signature: [window.location.pathname + window.location.search, heading, String(controlLabels.length), controlLabels.join("|")].join("::")
-      };
+        .join("|");
     })
-    .catch(() => ({
-      url: page.url(),
-      heading: "",
-      controlCount: 0,
-      controlLabels: [],
-      signature: page.url()
-    }));
+    .catch(() => "");
+
+  const parsedUrl = (() => {
+    try {
+      return new URL(url);
+    } catch {
+      return null;
+    }
+  })();
+
+  const signature = [
+    parsedUrl ? `${parsedUrl.pathname}${parsedUrl.search}` : url,
+    heading,
+    formContainerFingerprint,
+    String(controlLabels.length),
+    controlLabels.join("|")
+  ].join("::");
+
+  return {
+    url,
+    heading,
+    controlCount: controlLabels.length,
+    controlLabels,
+    signature
+  };
 }
 
 async function triggerAutomaticContinuation(sessionId: string, page: Page) {
@@ -239,24 +267,52 @@ async function triggerAutomaticContinuation(sessionId: string, page: Page) {
   if (!session) return;
 
   const runtime = getApplicationRuntimeState(sessionId);
-  if (runtime.stopped || runtime.activePass || !state.armed || state.processing) {
+  if (runtime.stopped) {
+    pushTransitionEvent(sessionId, "pass_scheduled_but_cancelled", "runtime_stopped");
+    return;
+  }
+  if (!state.armed) {
+    pushTransitionEvent(sessionId, "pass_scheduled_but_cancelled", "coordinator_not_armed");
+    return;
+  }
+  if (state.processing) {
+    state.pendingSignal = true;
+    pushTransitionEvent(sessionId, "pass_scheduled_but_cancelled", "pass_already_processing");
+    return;
+  }
+  if (runtime.activePass) {
+    state.pendingSignal = true;
+    pushTransitionEvent(sessionId, "pass_scheduled_but_cancelled", "runtime_pass_active");
     return;
   }
 
   const identity = await readApplicationPageIdentity(page);
+  pushTransitionEvent(sessionId, "new_page_identity_calculated", identity.signature);
   state.lastObservedIdentity = identity.signature;
-  if (!identity.signature || identity.signature === state.baselineIdentity || identity.signature === state.lastTriggeredIdentity) {
+  if (!identity.signature) {
+    pushTransitionEvent(sessionId, "page_identity_unchanged", "empty_identity");
+    return;
+  }
+  if (identity.signature === state.baselineIdentity) {
+    pushTransitionEvent(sessionId, "page_identity_unchanged", "matches_baseline");
+    return;
+  }
+  if (identity.signature === state.lastTriggeredIdentity) {
+    pushTransitionEvent(sessionId, "page_identity_unchanged", "already_triggered");
     return;
   }
 
   state.processing = true;
+  state.pendingSignal = false;
   state.lastTriggeredIdentity = identity.signature;
   try {
+    pushTransitionEvent(sessionId, "fill_pass_started", identity.signature);
     const { runAutofillPass } = await import("@/lib/quickApply");
     await runAutofillPass(sessionId, {
       trigger: "automatic",
       reuseOpenPage: true
     });
+    pushTransitionEvent(sessionId, "pass_finished", identity.signature);
   } finally {
     state.processing = false;
   }
@@ -265,9 +321,12 @@ async function triggerAutomaticContinuation(sessionId: string, page: Page) {
 function scheduleAutomaticContinuation(sessionId: string, page: Page) {
   const state = getOrCreateState(sessionId);
   state.page = page;
+  state.pendingSignal = true;
   if (state.timer) {
     clearTimeout(state.timer);
   }
+
+  pushTransitionEvent(sessionId, "fill_pass_scheduled", page.url());
 
   state.timer = setTimeout(() => {
     state.timer = null;
@@ -283,6 +342,7 @@ export async function ensureApplicationTransitionCoordinator(sessionId: string, 
   if (!transitionContexts.has(context)) {
     await context.exposeBinding(TRANSITION_BINDING, async ({ page: sourcePage }, payload: TransitionSignalPayload) => {
       if (!payload?.sessionId || !sourcePage || sourcePage.isClosed()) return;
+      pushTransitionEvent(payload.sessionId, "navigation_signal_received", payload.reason);
       scheduleAutomaticContinuation(payload.sessionId, sourcePage);
     });
     transitionContexts.add(context);
@@ -290,10 +350,12 @@ export async function ensureApplicationTransitionCoordinator(sessionId: string, 
 
   if (!transitionPages.has(page)) {
     page.on("domcontentloaded", () => {
+      pushTransitionEvent(sessionId, "navigation_signal_received", "domcontentloaded");
       scheduleAutomaticContinuation(sessionId, page);
     });
     page.on("framenavigated", (frame) => {
       if (frame === page.mainFrame()) {
+        pushTransitionEvent(sessionId, "navigation_signal_received", "framenavigated");
         scheduleAutomaticContinuation(sessionId, page);
       }
     });
@@ -326,6 +388,11 @@ export async function noteApplicationPassSettled(
   if (trigger === "manual" || trigger === "automatic") {
     state.armed = true;
   }
+  pushTransitionEvent(sessionId, "overlay_updated", identity.signature);
+  if (state.pendingSignal && state.page && !state.processing) {
+    state.pendingSignal = false;
+    scheduleAutomaticContinuation(sessionId, state.page);
+  }
 }
 
 export function getApplicationTransitionDiagnostics(sessionId: string) {
@@ -335,7 +402,9 @@ export function getApplicationTransitionDiagnostics(sessionId: string) {
     lastObservedIdentity: state.lastObservedIdentity,
     lastTriggeredIdentity: state.lastTriggeredIdentity,
     armed: state.armed,
-    processing: state.processing
+    processing: state.processing,
+    pendingSignal: state.pendingSignal,
+    eventLog: state.eventLog.slice()
   };
 }
 

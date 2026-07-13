@@ -229,6 +229,30 @@ test("phone country code dropdown is filled from profile", () => {
   assert.equal(result.suggestedValue, "United States (+1)");
 });
 
+test("degree dropdown safely matches equivalent bachelor's options without crossing degree families", () => {
+  const matched = suggestion("education_degree", createProfile(), {
+    type: "select-one",
+    selectOptions: ["Associate Degree", "Bachelor's Degree", "Master's Degree"]
+  });
+  assert.equal(matched.suggestedValue, "Bachelor's Degree");
+
+  const exact = suggestion("education_degree", createProfile(), {
+    controlType: "menu_button",
+    role: "button",
+    type: "button",
+    selectOptions: ["Associate Degree", "Bachelor of Science", "Master of Science"]
+  });
+  assert.equal(exact.suggestedValue, "Bachelor of Science");
+});
+
+test("employment answers derive from the primary saved experience entry", () => {
+  const profile = createProfile();
+  assert.equal(suggestion("employer", profile).suggestedValue, "International Business Machines");
+  assert.equal(suggestion("job_title", profile).suggestedValue, "Software Engineer");
+  assert.equal(suggestion("employment_start_date", profile).suggestedValue, "2022-06");
+  assert.equal(suggestion("employment_end_date", profile).suggestedValue, "");
+});
+
 test("phone country code is not confused with extension", () => {
   const profile = createProfile({ identity: { ...createProfile().identity, phoneExtension: "77" } });
   const code = suggestion("phone_country_code", profile);

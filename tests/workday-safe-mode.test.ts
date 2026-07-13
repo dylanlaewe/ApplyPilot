@@ -150,16 +150,41 @@ test("high-risk Workday fields fail closed and are not guessed", () => {
   assert.equal(workAuthorization.suggestedValue, "");
 });
 
-test("repeatable sections and resume uploads stay manual in Workday safe mode", () => {
-  const [resume, education, experience] = applyWorkdaySafeModeRules([
+test("repeatable sections stay manual only when Workday cannot safely map the visible entry", () => {
+  const [resume, education, experience, degree] = applyWorkdaySafeModeRules([
     field({ intent: "resume_upload", type: "file", suggestedValue: "/tmp/resume.pdf" }),
-    field({ intent: "education_school", label: "School" }),
-    field({ intent: "employer", label: "Company" })
+    field({ intent: "education_school", label: "School", suggestedValue: "" }),
+    field({ intent: "employer", label: "Company", suggestedValue: "" }),
+    field({
+      intent: "education_degree",
+      label: "Degree",
+      type: "button",
+      controlType: "menu_button",
+      role: "button",
+      suggestedValue: "Bachelor of Science",
+      matchedOption: "Bachelor of Science",
+      selectOptions: ["Associate Degree", "Bachelor of Science", "Master of Science"]
+    })
   ]);
 
   assert.equal(resume.reason, "Resume upload needs verification");
   assert.equal(education.reason, "This section requires manual setup");
   assert.equal(experience.reason, "This section requires manual setup");
+  assert.match(degree.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(degree.status, "needs_review");
+});
+
+test("visible repeatable text fields can stay eligible when ApplyPilot has an exact saved value", () => {
+  const [school, employer, title] = applyWorkdaySafeModeRules([
+    field({ intent: "education_school", label: "School", suggestedValue: "Commonwealth State University" }),
+    field({ intent: "employer", label: "Company", suggestedValue: "Benchmark Systems" }),
+    field({ intent: "job_title", label: "Job Title", suggestedValue: "Software Engineer" })
+  ]);
+
+  for (const current of [school, employer, title]) {
+    assert.equal(current.status, "needs_review");
+    assert.match(current.reason, /Safe to autofill on this Workday page/i);
+  }
 });
 
 test("basic deterministic Workday text fields stay eligible for one safe pass", () => {

@@ -9,6 +9,7 @@ import {
   deriveHighestCompletedEducation,
   deriveHighestEducationIncludingInProgress,
   getFullPhoneNumber,
+  getPrimaryExperience,
   getStructuredLocation
 } from "@/lib/profileFacts";
 import { detectQuestionPolarity } from "@/lib/questionPolarity";
@@ -46,6 +47,7 @@ function findRelevantCompanyFromQuestion(field: RawScannedField) {
 export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile, field: RawScannedField): DerivedAnswer {
   const knowledge = profile.knowledgeProfile ?? buildKnowledgeProfile(profile);
   const primaryEducation = findPrimaryEducation(profile);
+  const primaryExperience = getPrimaryExperience(profile);
   const questionText = [field.label, field.nearbyText, field.ariaLabel, field.placeholder].filter(Boolean).join(" ");
 
   switch (intent) {
@@ -263,6 +265,44 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
             confidence: 0.92
           }
         : { value: "", source: "unknown", reason: "No education entry is saved yet.", confidence: 0.3 };
+    case "employer":
+      return primaryExperience
+        ? {
+            value: primaryExperience.company,
+            source: "explicit_profile",
+            reason: "Using your saved employer from the primary work-experience entry.",
+            confidence: 0.94
+          }
+        : { value: "", source: "unknown", reason: "No work-experience entry is saved yet.", confidence: 0.3 };
+    case "job_title":
+      return primaryExperience
+        ? {
+            value: primaryExperience.title,
+            source: "explicit_profile",
+            reason: "Using your saved job title from the primary work-experience entry.",
+            confidence: 0.94
+          }
+        : { value: "", source: "unknown", reason: "No work-experience entry is saved yet.", confidence: 0.3 };
+    case "employment_start_date":
+      return primaryExperience
+        ? {
+            value: primaryExperience.startDate,
+            source: "explicit_profile",
+            reason: "Using your saved start date from the primary work-experience entry.",
+            confidence: 0.92
+          }
+        : { value: "", source: "unknown", reason: "No work-experience entry is saved yet.", confidence: 0.3 };
+    case "employment_end_date":
+      return primaryExperience
+        ? {
+            value: primaryExperience.currentRole ? "" : primaryExperience.endDate,
+            source: primaryExperience.currentRole ? "approved_fallback" : "explicit_profile",
+            reason: primaryExperience.currentRole
+              ? "Your primary work-experience entry is marked current, so ApplyPilot left the end date blank."
+              : "Using your saved end date from the primary work-experience entry.",
+            confidence: primaryExperience.currentRole ? 0.9 : 0.92
+          }
+        : { value: "", source: "unknown", reason: "No work-experience entry is saved yet.", confidence: 0.3 };
     case "security_clearance_level":
       if (knowledge.security.securityClearanceLevel === "ask") {
         return { value: "", source: "unknown", reason: "Security clearance is set to ask each time.", confidence: 0.4 };

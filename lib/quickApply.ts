@@ -3,7 +3,8 @@ import { prepareDetectedFields, applyWaitingUpdate } from "@/lib/autofillPrepara
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
 import {
   ensureApplicationTransitionCoordinator,
-  noteApplicationPassSettled
+  noteApplicationPassSettled,
+  recordApplicationTransitionEvent
 } from "@/lib/applicationTransitionCoordinator";
 import {
   beginApplicationRuntimePass,
@@ -33,7 +34,9 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, {
     navigate: false
   });
+  recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
   await waitForPageReadiness(runtime.page);
+  recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
   const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
 
   if (prepared.waiting) {
@@ -60,6 +63,11 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   }));
 
   const auditEntries: AuditLogEntry[] = [];
+  recordApplicationTransitionEvent(
+    sessionId,
+    "field_plan_created",
+    `${prepared.detectedFields.filter((field) => shouldAutofill(field)).length} autofillable field(s)`
+  );
   for (const field of prepared.detectedFields) {
     if (!shouldAutofill(field)) continue;
 
@@ -129,6 +137,7 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   }
 
   await writeGenericPassDiagnostic(sessionId, session.atsProvider, prepared.detectedFields).catch(() => undefined);
+  recordApplicationTransitionEvent(sessionId, "overlay_updated", runtime.page.url());
 
   return updateApplicationSession(sessionId, (current) => ({
     ...(() => {
@@ -221,13 +230,17 @@ export async function runAutofillPass(
     });
     await ensureApplicationTransitionCoordinator(sessionId, runtime.page);
     await ensureApplicationOverlayForSession(sessionId, runtime.page);
+    recordApplicationTransitionEvent(sessionId, "overlay_confirmed", runtime.page.url());
+    recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
     await waitForPageReadiness(runtime.page);
+    recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
 
     const strategy = await resolveAutomationStrategyForPage({
       page: runtime.page,
       url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
       settings
     });
+    recordApplicationTransitionEvent(sessionId, "strategy_resolved", `${strategy.strategyId}:${strategy.classificationReason}`);
 
     if (strategy.workdaySafeModeActive) {
       const updatedSession = await runWorkdaySafePass(sessionId, session, isRetry);

@@ -7,6 +7,7 @@ import { buildShortAnswerSuggestion } from "@/lib/shortAnswerGenerator";
 import {
   matchAvailabilityOption,
   matchBooleanOption,
+  matchEducationDegreeOption,
   matchEducationLevel,
   matchEeocVeteranOption,
   matchSecurityClearanceLevel,
@@ -85,6 +86,10 @@ function maybeMatchVisibleOption(intent: FieldIntent, field: RawScannedField, ca
       options,
       candidate as Exclude<ApplicantProfile["knowledgeProfile"]["education"]["highestEducationLevel"], "">
     );
+  }
+
+  if (intent === "education_degree") {
+    return matchEducationDegreeOption(options, profile.education[0] ?? null) ?? matchTextOption(options, candidate, "Matched degree dropdown option.");
   }
 
   if (intent === "availability") {

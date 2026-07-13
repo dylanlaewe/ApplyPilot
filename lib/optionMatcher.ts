@@ -1,6 +1,7 @@
 import {
   ClearanceStatus,
   CompensationProfile,
+  EducationEntry,
   FieldIntent,
   HighestEducationLevel,
   SecurityClearanceLevel,
@@ -213,6 +214,100 @@ export function matchSecurityClearanceStatus(options: string[], value: Clearance
 
 export function matchEducationLevel(options: string[], value: HighestEducationLevel) {
   return matchFromAliases(value, options, EDUCATION_LEVEL_ALIASES, "Matched education level.");
+}
+
+function degreeFamilyOf(entry: Pick<EducationEntry, "degreeType" | "degreeLevel" | "degree">) {
+  const normalizedDegree = normalizeText(entry.degree);
+  const normalizedType = normalizeText(entry.degreeType);
+  const normalizedLevel = normalizeText(entry.degreeLevel);
+
+  if (normalizedDegree.includes("associate") || normalizedType.includes("associate") || normalizedLevel.includes("associate")) return "associate";
+  if (normalizedDegree.includes("bachelor") || normalizedType.includes("bachelor") || normalizedLevel.includes("bachelor")) return "bachelor";
+  if (normalizedDegree.includes("master") || normalizedType.includes("master") || normalizedLevel.includes("master")) return "master";
+  if (normalizedDegree.includes("doctor") || normalizedDegree.includes("phd") || normalizedType.includes("doctor") || normalizedLevel.includes("doctoral")) return "doctorate";
+  if (normalizedDegree.includes("certificate") || normalizedType.includes("certificate") || normalizedLevel.includes("certificate")) return "certificate";
+  if (normalizedDegree.includes("high school") || normalizedDegree.includes("ged") || normalizedLevel.includes("high_school")) return "high_school";
+  return "";
+}
+
+export function matchEducationDegreeOption(options: string[], entry: Pick<EducationEntry, "degree" | "degreeType" | "degreeLevel"> | null) {
+  if (!entry) return null;
+
+  const exactDegree = normalizeText(entry.degree);
+  const family = degreeFamilyOf(entry);
+  const mentionsScience = /\bscience\b/.test(exactDegree) || /bachelor_of_science|master_of_science/.test(normalizeText(entry.degreeType));
+  const mentionsArts = /\barts?\b/.test(exactDegree) || /bachelor_of_arts|master_of_arts/.test(normalizeText(entry.degreeType));
+
+  let best: MatchResult | null = null;
+  for (const option of options) {
+    const normalizedOption = normalizeText(option);
+    if (!normalizedOption) continue;
+
+    if (exactDegree && normalizedOption === exactDegree) {
+      return { option, confidence: 0.99, reason: "Matched the saved degree exactly." };
+    }
+
+    if (exactDegree && (normalizedOption.includes(exactDegree) || exactDegree.includes(normalizedOption))) {
+      best = best && best.confidence >= 0.96 ? best : { option, confidence: 0.96, reason: "Matched the saved degree wording closely." };
+      continue;
+    }
+
+    if (family === "bachelor") {
+      if (/associate|master|doctor/.test(normalizedOption)) continue;
+      if (mentionsScience && /\barts?\b/.test(normalizedOption)) continue;
+      if (mentionsArts && /\bscience\b/.test(normalizedOption)) continue;
+
+      if (/bachelor/.test(normalizedOption)) {
+        const confidence = /\bscience\b/.test(normalizedOption) === mentionsScience || /\barts?\b/.test(normalizedOption) === mentionsArts ? 0.95 : 0.92;
+        if (!best || confidence > best.confidence) {
+          best = { option, confidence, reason: "Matched the saved bachelor's degree family safely." };
+        }
+      }
+      continue;
+    }
+
+    if (family === "associate") {
+      if (/bachelor|master|doctor/.test(normalizedOption)) continue;
+      if (/associate/.test(normalizedOption)) {
+        best = best && best.confidence >= 0.94 ? best : { option, confidence: 0.94, reason: "Matched the saved associate-degree family safely." };
+      }
+      continue;
+    }
+
+    if (family === "master") {
+      if (/associate|bachelor|doctor/.test(normalizedOption)) continue;
+      if (/master/.test(normalizedOption)) {
+        const confidence = /\bscience\b/.test(normalizedOption) === mentionsScience || /\barts?\b/.test(normalizedOption) === mentionsArts ? 0.95 : 0.92;
+        if (!best || confidence > best.confidence) {
+          best = { option, confidence, reason: "Matched the saved master's degree family safely." };
+        }
+      }
+      continue;
+    }
+
+    if (family === "doctorate") {
+      if (/associate|bachelor|master/.test(normalizedOption)) continue;
+      if (/doctor|phd/.test(normalizedOption)) {
+        best = best && best.confidence >= 0.94 ? best : { option, confidence: 0.94, reason: "Matched the saved doctoral-degree family safely." };
+      }
+      continue;
+    }
+
+    if (family === "certificate") {
+      if (/certificate|vocational|trade/.test(normalizedOption)) {
+        best = best && best.confidence >= 0.92 ? best : { option, confidence: 0.92, reason: "Matched the saved certificate-level education safely." };
+      }
+      continue;
+    }
+
+    if (family === "high_school") {
+      if (/high school|ged/.test(normalizedOption)) {
+        best = best && best.confidence >= 0.92 ? best : { option, confidence: 0.92, reason: "Matched the saved high-school education safely." };
+      }
+    }
+  }
+
+  return best;
 }
 
 function stateVariants(value: string) {

@@ -346,9 +346,95 @@ async function settleFieldCommitState(pageOrFrame: Page | Frame, selector: strin
   await pageOrFrame.waitForTimeout(120);
 }
 
+async function verifyUploadValue(pageOrFrame: Page | Frame, field: DetectedField, expectedValue: string): Promise<VerificationResult> {
+  const locator = pageOrFrame.locator(field.selector).first();
+  const expectedFileName = expectedValue.split("/").pop() || expectedValue.split("\\").pop() || expectedValue;
+  const normalizedExpected = normalizeText(expectedFileName);
+  const locatedUploadState = await locator
+    .evaluate((element) => {
+      const normalizeInner = (value: string) => value.replace(/\s+/g, " ").trim();
+      const isVisible = (candidate: Element | null) => {
+        if (!(candidate instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(candidate);
+        const rect = candidate.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      const wrapper =
+        element.closest(
+          [
+            "[data-applypilot-group-id]",
+            "fieldset",
+            ".application-question",
+            ".form-field",
+            ".form-group",
+            ".field",
+            "[role='group']",
+            "[data-testid*='field']"
+          ].join(", ")
+        ) ?? element.parentElement;
+      const localInputs = Array.from((wrapper ?? document).querySelectorAll("input[type='file']"));
+      const pageInputs = localInputs.length ? localInputs : Array.from(document.querySelectorAll("input[type='file']"));
+      const fileNames = pageInputs
+        .map((input) => Array.from((input as HTMLInputElement).files ?? []).map((file) => file.name))
+        .flat()
+        .filter(Boolean);
+      const visibleText = [
+        normalizeInner((element.textContent || "").trim()),
+        normalizeInner((wrapper?.textContent || "").trim()),
+        ...Array.from(document.querySelectorAll("label[for], [role='alert'], .uploaded-file, .file-name, .attachment-name"))
+          .filter((candidate) => isVisible(candidate))
+          .map((candidate) => normalizeInner(candidate.textContent || ""))
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      return {
+        fileNames,
+        visibleText
+      };
+    })
+    .catch(() => ({
+      fileNames: [] as string[],
+      visibleText: ""
+    }));
+  const bodyText = await pageOrFrame.locator("body").innerText().catch(() => "");
+  const matchedFile = locatedUploadState.fileNames.find((name) => normalizeText(name).includes(normalizedExpected)) || "";
+  const pageShowsFileName =
+    normalizeText(locatedUploadState.visibleText).includes(normalizedExpected) || normalizeText(bodyText).includes(normalizedExpected);
+
+  return {
+    success: Boolean(matchedFile || pageShowsFileName),
+    actualValue: matchedFile || (pageShowsFileName ? expectedFileName : ""),
+    commitState: matchedFile || pageShowsFileName ? "committed" : "unresolved",
+    message: matchedFile || pageShowsFileName ? "File upload verified and committed." : "File upload could not be verified."
+  };
+}
+
 export async function verifyFilledValue(pageOrFrame: Page | Frame, field: DetectedField, expectedValue: string): Promise<VerificationResult> {
   const locator = pageOrFrame.locator(field.selector).first();
   const type = field.type;
+
+  if (field.intent === "resume_upload" || field.intent === "cover_letter_upload") {
+    if (type === "file") {
+      const fileName = await locator
+        .evaluate((element) => {
+          if (!(element instanceof HTMLInputElement)) return "";
+          return element.files?.[0]?.name ?? element.value;
+        })
+        .catch(() => "");
+      const expectedFileName = expectedValue.split("/").pop() || expectedValue.split("\\").pop() || expectedValue;
+      const bodyText = await pageOrFrame.locator("body").innerText().catch(() => "");
+      const fileNameVisibleOnPage = normalizeText(bodyText).includes(normalizeText(expectedFileName));
+      return {
+        success: normalizeText(fileName).includes(normalizeText(expectedFileName)) || fileNameVisibleOnPage,
+        actualValue: fileName || (fileNameVisibleOnPage ? expectedFileName : ""),
+        commitState: fileName || fileNameVisibleOnPage ? "committed" : "unresolved",
+        message: fileName || fileNameVisibleOnPage ? "File upload verified and committed." : "File upload could not be verified."
+      };
+    }
+
+    return verifyUploadValue(pageOrFrame, field, expectedValue);
+  }
 
   if (type === "checkbox") {
     if (field.name && (field.selectOptions?.length ?? 0) > 1) {
@@ -422,24 +508,6 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
       actualValue: checked ? expectedValue : "",
       commitState: checked ? "committed" : "unresolved",
       message: checked ? "Radio selection verified and committed." : "Radio selection could not be verified."
-    };
-  }
-
-  if (type === "file") {
-    const fileName = await locator
-      .evaluate((element) => {
-        if (!(element instanceof HTMLInputElement)) return "";
-        return element.files?.[0]?.name ?? element.value;
-      })
-      .catch(() => "");
-    const expectedFileName = expectedValue.split("/").pop() || expectedValue.split("\\").pop() || expectedValue;
-    const bodyText = await pageOrFrame.locator("body").innerText().catch(() => "");
-    const fileNameVisibleOnPage = normalizeText(bodyText).includes(normalizeText(expectedFileName));
-    return {
-      success: normalizeText(fileName).includes(normalizeText(expectedFileName)) || fileNameVisibleOnPage,
-      actualValue: fileName || (fileNameVisibleOnPage ? expectedFileName : ""),
-      commitState: fileName || fileNameVisibleOnPage ? "committed" : "unresolved",
-      message: fileName || fileNameVisibleOnPage ? "File upload verified and committed." : "File upload could not be verified."
     };
   }
 

@@ -6,10 +6,33 @@
     "company": "Dataiku",
     "roleTitle": "Fullstack Software Engineer - Business Solutions",
     "url": "https://job-boards.greenhouse.io/dataiku/jobs/5963977004",
-    "active": true,
-    "lastVerifiedAt": "2026-07-10",
+    "active": false,
     "tags": ["structured", "short-answer", "generatable"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "codeforamerica-greenhouse",
+    "phase": 1,
+    "ats": "greenhouse",
+    "company": "Code for America",
+    "roleTitle": "Staff Software Engineer",
+    "url": "https://job-boards.greenhouse.io/codeforamerica/jobs/7081271",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "short-answer", "file_upload"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "cloudflare-greenhouse",
+    "phase": 1,
+    "ats": "greenhouse",
+    "company": "Cloudflare",
+    "roleTitle": "Software Engineer - Platforms & Productivity",
+    "url": "https://job-boards.greenhouse.io/cloudflare/jobs/6972536?gh_jid=6972536",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "file_upload", "metadata"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
   {
     "id": "electrosoft-greenhouse",
@@ -41,9 +64,21 @@
     "roleTitle": "Cybersecurity Internship Fall 2026 - Federal",
     "url": "https://jobs.lever.co/tevora/335ec3e2-c7ee-4e4c-b4a9-04428999e954/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-10",
+    "lastVerifiedAt": "2026-07-12",
     "tags": ["structured", "metadata", "file_upload"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "peoplegrove-lever",
+    "phase": 2,
+    "ats": "lever",
+    "company": "PeopleGrove",
+    "roleTitle": "Product Success Specialist (Remote)",
+    "url": "https://jobs.lever.co/peoplegrove/bb2ee766-a420-4fe9-bac7-fa0a41caffa5/apply",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "short-answer", "lever"],
+    "expectedFieldTypes": ["text", "dropdown", "short_answer"]
   },
   {
     "id": "elementsolutions-lever",
@@ -74,10 +109,33 @@
     "company": "1Password",
     "roleTitle": "Developer Intern, Trust Platforms - Fall 2026",
     "url": "https://jobs.ashbyhq.com/1password/8f8774dc-e400-48b1-8100-c6840b8eaed1/application",
-    "active": true,
-    "lastVerifiedAt": "2026-07-10",
+    "active": false,
     "tags": ["structured", "short-answer", "missing-fact"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "mercor-ashby",
+    "phase": 3,
+    "ats": "ashby",
+    "company": "Mercor",
+    "roleTitle": "Security Engineer, Application Security",
+    "url": "https://jobs.ashbyhq.com/mercor/cf6fcf5a-6348-4d60-beb3-43333a2c2bb9/application",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "file_upload", "ashby"],
+    "expectedFieldTypes": ["text", "file_upload"]
+  },
+  {
+    "id": "novig-ashby",
+    "phase": 3,
+    "ats": "ashby",
+    "company": "Novig",
+    "roleTitle": "Fraud Specialist",
+    "url": "https://jobs.ashbyhq.com/novig/bd216331-c180-4534-b203-336d34c63ab9/application",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "file_upload", "ashby"],
+    "expectedFieldTypes": ["text", "file_upload"]
   },
   {
     "id": "new-story-schools-ashby",
@@ -97,10 +155,45 @@
     "company": "JCC Greater Boston",
     "roleTitle": "Camp Counselor",
     "url": "https://apply.workable.com/jcc-greater-boston/j/388A8F957D/",
-    "active": true,
-    "lastVerifiedAt": "2026-07-10",
+    "active": false,
     "tags": ["structured", "autocomplete"],
     "expectedFieldTypes": ["text", "dropdown", "autocomplete", "file_upload"]
+  },
+  {
+    "id": "rea-workable",
+    "phase": 4,
+    "ats": "workable",
+    "company": "Rea",
+    "roleTitle": "Senior Business Valuation Associate",
+    "url": "https://apply.workable.com/reaadvisory/j/854D0A3C8F/apply",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "file_upload", "workable"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload"]
+  },
+  {
+    "id": "fortanix-workable",
+    "phase": 4,
+    "ats": "workable",
+    "company": "Fortanix",
+    "roleTitle": "Staff Software Engineer - Rust and Distributed Systems (Bay Area, hybrid)",
+    "url": "https://apply.workable.com/fortanix/j/3AF145F86B/apply",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "file_upload", "workable", "short-answer"],
+    "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
+  },
+  {
+    "id": "levelall-smartrecruiters",
+    "phase": 4,
+    "ats": "smartrecruiters",
+    "company": "Level All",
+    "roleTitle": "Software Engineer, Elixir",
+    "url": "https://jobs.smartrecruiters.com/LevelAll/744000120818457-software-engineer-elixir-?oga=true",
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["structured", "captcha-barrier", "smartrecruiters"],
+    "expectedFieldTypes": ["captcha_barrier"]
   },
   {
     "id": "tp-link-workable",
@@ -131,8 +224,9 @@
     "company": "Brown University",
     "roleTitle": "Associate Director",
     "url": "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/jobs/details/Associate-Director--Community-Engaged-Data-and-Evaluation-Collaborative_REQ207311",
-    "active": false,
-    "tags": ["experimental", "workday"],
+    "active": true,
+    "lastVerifiedAt": "2026-07-12",
+    "tags": ["experimental", "workday", "login-barrier"],
     "expectedFieldTypes": ["text", "dropdown"]
   },
   {
@@ -143,7 +237,7 @@
     "roleTitle": "Java Software Engineer - Remote",
     "url": "https://jobs.jobvite.com/iboss/job/oev5zfw7/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-10",
+    "lastVerifiedAt": "2026-07-12",
     "tags": ["structured", "jobvite", "entry-action-free"],
     "expectedFieldTypes": ["text", "file_upload", "navigation"]
   },

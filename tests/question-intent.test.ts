@@ -24,3 +24,46 @@ test("job source dropdowns are classified as referral_source instead of educatio
   assert.equal(result.intent, "referral_source");
   assert.ok(result.confidence >= 0.9);
 });
+
+test("workday-style degree menu buttons are classified as education_degree", () => {
+  const field: RawScannedField = {
+    label: "Degree",
+    name: "degree",
+    domId: "wd_degree_button",
+    type: "button",
+    selector: "#wd_degree_button",
+    detectedValue: "",
+    controlType: "menu_button",
+    role: "button",
+    selectOptions: ["Associate Degree", "Bachelor of Science", "Master of Science"],
+    nearbyText: "Education Degree",
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "education_degree");
+  assert.ok(result.confidence >= 0.9);
+});
+
+test("custom resume buttons are classified as resume_upload", () => {
+  const field: RawScannedField = {
+    label: "Add Resume*",
+    name: "",
+    domId: "resume_button",
+    type: "button",
+    selector: "#resume_button",
+    detectedValue: "Select",
+    controlType: "menu_button",
+    role: "button",
+    nearbyText: "Add Resume",
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "resume_upload");
+  assert.ok(result.confidence >= 0.9);
+});

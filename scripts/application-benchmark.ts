@@ -190,6 +190,8 @@ type BenchmarkCaseResult = {
   };
   pagesReached: number;
   pagesFilled: number;
+  transitionsAttempted: number;
+  transitionsContinued: number;
   finalReviewPageReached: boolean;
   rawDomCandidateCount: number;
   noiseRejectedCount: number;
@@ -814,6 +816,12 @@ function fieldIdentityKey(field: Pick<RawScannedField, "domId" | "label" | "type
     normalizeText(field.type || ""),
     normalizeText(field.intent || "")
   ].join("::");
+}
+
+function isResumeUploadRecord(record: Pick<BenchmarkFieldRecord, "fieldLabel" | "nearbyQuestionText" | "detectedIntent" | "domControlType">) {
+  if (record.detectedIntent === "resume_upload") return true;
+  const combined = normalizeText([record.fieldLabel, record.nearbyQuestionText, record.detectedIntent].filter(Boolean).join(" "));
+  return /\bresume\b|\bcv\b/.test(combined) && record.domControlType !== "textarea";
 }
 
 function mergeDetectedFields(...fieldLists: DetectedField[][]) {
@@ -1461,6 +1469,24 @@ async function maybeAdvanceToNextPage(
   return true;
 }
 
+async function captureBenchmarkScreenshot(
+  page: Awaited<ReturnType<typeof launchBrowserSession>>["page"],
+  screenshotPath: string,
+  warnings: string[]
+) {
+  try {
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+      timeout: 12_000
+    });
+    return true;
+  } catch (error) {
+    warnings.push(`Screenshot capture skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
 function metricsFromInventory(records: BenchmarkFieldRecord[]) {
   const answerable = records.filter((record) => record.answerable);
   const safeAnswerable = records.filter((record) => record.safeAnswerableNow);
@@ -1476,7 +1502,7 @@ function metricsFromInventory(records: BenchmarkFieldRecord[]) {
     isAutocompleteField({ controlType: record.domControlType as DetectedField["controlType"], intent: record.detectedIntent as DetectedField["intent"] })
   );
   const autocompleteVerified = autocompletes.filter((record) => record.verified);
-  const fileUploads = answerable.filter((record) => record.domControlType === "file");
+  const fileUploads = answerable.filter((record) => isResumeUploadRecord(record) || record.domControlType === "file");
   const fileUploadVerified = fileUploads.filter((record) => record.verified);
   const severeFieldFailures = answerable.filter((record) => record.severe && record.attempted && !record.verified).length;
   const severeIncorrectAnswers = answerable.filter((record) => record.severe && record.verified && record.failureCategory !== null).length;
@@ -1608,14 +1634,16 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
       let currentPageNumber = 1;
       let retriesRequired = 0;
       let unexpectedPageSwitches = 0;
+      let transitionsAttempted = 0;
 
       while (currentPageNumber <= 4) {
         await waitForPageReadiness(page);
         const pageUrl = page.url();
         const pageHeading = await getPageHeading(page);
         const screenshotBefore = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-before.png`);
-        await page.screenshot({ path: screenshotBefore, fullPage: true });
-        screenshotPaths.push(screenshotBefore);
+        if (await captureBenchmarkScreenshot(page, screenshotBefore, warnings)) {
+          screenshotPaths.push(screenshotBefore);
+        }
 
         const rawInventory = await collectVisibleFieldInventory(page);
         const expectedFields = buildSuggestedFields(rawInventory.fields, fixtures.profile, fixtures.answerBank, {
@@ -1668,13 +1696,15 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
         allFieldRecords.push(...inventory);
 
         const screenshotAfter = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-after.png`);
-        await page.screenshot({ path: screenshotAfter, fullPage: true });
-        screenshotPaths.push(screenshotAfter);
+        if (await captureBenchmarkScreenshot(page, screenshotAfter, warnings)) {
+          screenshotPaths.push(screenshotAfter);
+        }
 
         const movedForward = await maybeAdvanceToNextPage(page, inventory, actionsTaken);
         if (!movedForward) {
           break;
         }
+        transitionsAttempted += 1;
 
         const newUrl = page.url();
         if (newUrl !== pageUrl) {
@@ -1707,6 +1737,8 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
         },
         pagesReached: stageResults.length,
         pagesFilled: stageResults.filter((stage) => stage.inventory.some((record) => record.verified)).length,
+        transitionsAttempted,
+        transitionsContinued: Math.min(transitionsAttempted, Math.max(stageResults.length - 1, 0)),
         finalReviewPageReached: actionsTaken.some((entry) => /review/i.test(entry)),
         rawDomCandidateCount: stageResults.reduce((sum, stage) => sum + stage.initialRawFieldCount, 0),
         noiseRejectedCount: stageResults.reduce((sum, stage) => sum + stage.noiseRejectedCount, 0),
@@ -1808,6 +1840,8 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
     },
     pagesReached: stageResults.length,
     pagesFilled: 0,
+    transitionsAttempted: 0,
+    transitionsContinued: 0,
     finalReviewPageReached: false,
     rawDomCandidateCount: 0,
     noiseRejectedCount: 0,
@@ -1915,6 +1949,8 @@ function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string): Benchma
     },
     pagesReached: 0,
     pagesFilled: 0,
+    transitionsAttempted: 0,
+    transitionsContinued: 0,
     finalReviewPageReached: false,
     rawDomCandidateCount: 0,
     noiseRejectedCount: 0,
@@ -2167,6 +2203,8 @@ function buildOverallSummary(results: BenchmarkCaseResult[]) {
   const scorableResults = results.filter((result) => result.status !== "site_unavailable");
   const metadataAvailable = scorableResults.filter((result) => result.metadata.source !== "none");
   const baseline = scorableResults.length || results.length || 1;
+  const transitionAttempts = scorableResults.reduce((sum, item) => sum + item.transitionsAttempted, 0);
+  const transitionContinued = scorableResults.reduce((sum, item) => sum + item.transitionsContinued, 0);
 
   return {
     cases: results.length,
@@ -2225,10 +2263,9 @@ function buildOverallSummary(results: BenchmarkCaseResult[]) {
       results.reduce((sum, item) => sum + item.fileUploadCount, 0)
     ),
     metadataSuccess: roundRatio(metadataAvailable.filter((result) => result.metadata.success).length, metadataAvailable.length),
-    multiPageContinuity: roundRatio(
-      scorableResults.reduce((sum, item) => sum + (item.pagesFilled ? item.pagesFilled / Math.max(item.pagesReached, 1) : 0), 0),
-      baseline
-    ),
+    transitionAttempts,
+    transitionContinued,
+    multiPageContinuity: transitionAttempts ? roundRatio(transitionContinued, transitionAttempts) : 1,
     severeIncorrectAnswers: results.reduce((sum, item) => sum + item.severeIncorrectAnswers, 0),
     severeFieldFailures: results.reduce((sum, item) => sum + item.severeFieldFailures, 0),
     generatableQuestionCount: results.reduce((sum, item) => sum + item.generatableQuestionCount, 0),
@@ -2631,7 +2668,11 @@ async function main() {
 
     const results: BenchmarkCaseResult[] = [...previousResults];
     for (const testCase of casesToRun) {
-      results.push(await runCaseWithTimeout(testCase, fixtures, args.caseTimeoutMs));
+      try {
+        results.push(await runCaseWithTimeout(testCase, fixtures, args.caseTimeoutMs));
+      } finally {
+        await resetBrowserManagerForTests().catch(() => undefined);
+      }
     }
 
     const failures = results.flatMap((result) =>

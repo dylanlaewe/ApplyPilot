@@ -225,3 +225,9 @@ export function getFullPhoneNumber(profile: ApplicantProfile) {
 export function getStructuredLocation(profile: ApplicantProfile) {
   return formatLocation(profile);
 }
+
+export function getPrimaryExperience(profile: ApplicantProfile) {
+  return profile.experience.find((entry) => entry.currentRole && (entry.company.trim() || entry.title.trim())) ??
+    profile.experience.find((entry) => entry.company.trim() || entry.title.trim()) ??
+    null;
+}

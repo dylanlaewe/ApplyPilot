@@ -2,6 +2,7 @@ import type { Frame, Page } from "playwright";
 
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
+import { recordApplicationTransitionEvent } from "@/lib/applicationTransitionCoordinator";
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
@@ -153,8 +154,11 @@ async function prepareWorkdaySafeFields(
   recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<PreparedWorkdayWaitingState | PreparedWorkdaySafeState> {
   const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, { navigate: false });
+  recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
   await waitForWorkdayStablePage(runtime.page);
+  recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
   await ensureWorkdayOverlayForSession(sessionId, runtime.page);
+  recordApplicationTransitionEvent(sessionId, "overlay_confirmed", runtime.page.url());
   recordDiagnostic?.("page_resolved", runtime.page.url());
 
   const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
@@ -181,6 +185,7 @@ async function prepareWorkdaySafeFields(
   });
   const metrics = await readWorkdayFieldMetrics(runtime.page, safeFields);
   const plan = buildWorkdayExecutionPlan(safeFields, metrics);
+  recordApplicationTransitionEvent(sessionId, "field_plan_created", `${plan.length} safe Workday field(s)`);
   recordDiagnostic?.("plan_created", `${plan.length} planned field(s)`);
   recordDiagnostic?.("safe_fields_count", String(safeFields.length));
 
@@ -308,6 +313,7 @@ export async function runWorkdaySafePass(
 
     completeWorkdayPass(sessionId, verifiedFieldKeys);
     recordDiagnostic?.("pass_finished");
+    recordApplicationTransitionEvent(sessionId, "overlay_updated", prepared.runtime.page.url());
 
     let updated = await saveDetectedFields(
       sessionId,

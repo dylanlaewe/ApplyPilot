@@ -353,6 +353,59 @@ test("file uploads stay verified even when the input re-renders", async () => {
   assert.equal(result.actualValue, "resume.txt");
 });
 
+test("custom resume buttons can upload through a revealed hidden file input", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  const tempDir = mkdtempSync(path.join(tmpdir(), "applypilot-custom-upload-"));
+  const resumePath = path.join(tempDir, "resume.txt");
+  writeFileSync(resumePath, "resume");
+
+  await page.setContent(`
+    <div data-applypilot-group-id="resume_group">
+      <h3 id="resume_header">Add Resume*</h3>
+      <button id="resume_button" type="button" aria-labelledby="resume_header" aria-haspopup="true">Select</button>
+      <div id="resume_menu" hidden>
+        <label for="resume_upload">File</label>
+      </div>
+      <input id="resume_upload" type="file" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;" />
+      <div id="resume_result"></div>
+    </div>
+    <script>
+      const button = document.getElementById('resume_button');
+      const menu = document.getElementById('resume_menu');
+      const input = document.getElementById('resume_upload');
+      const result = document.getElementById('resume_result');
+      button.addEventListener('click', () => {
+        menu.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+      });
+      input.addEventListener('change', () => {
+        const name = input.files?.[0]?.name || '';
+        button.textContent = name;
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        result.textContent = name;
+      });
+    </script>
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Add Resume*",
+      type: "text",
+      selector: "#resume_button",
+      controlType: "menu_button",
+      intent: "resume_upload",
+      questionText: "Add Resume"
+    }),
+    resumePath
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.actualValue, "resume.txt");
+  assert.equal(await page.locator("#resume_result").textContent(), "resume.txt");
+});
+
 test("stale selectors recover by rescanning the current page before fill", async () => {
   if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
   await page.setContent(`

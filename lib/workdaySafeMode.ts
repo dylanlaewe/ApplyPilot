@@ -62,7 +62,13 @@ const WORKDAY_SAFE_TEXT_INTENTS = new Set<FieldIntent>([
   "city",
   "state",
   "country",
-  "postal_code"
+  "postal_code",
+  "education_school",
+  "education_major",
+  "employer",
+  "job_title",
+  "employment_start_date",
+  "employment_end_date"
 ]);
 
 const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
@@ -81,6 +87,8 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
   "employment_end_date",
   "previous_employment"
 ]);
+
+const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree"]);
 
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "work_authorization",
@@ -266,6 +274,27 @@ function isFillableWorkdayTextControl(field: DetectedField) {
   return true;
 }
 
+function isFillableWorkdaySelectControl(field: DetectedField) {
+  return (
+    ["native_select", "aria_combobox", "autocomplete", "listbox", "menu_button", "custom_select"].includes(field.controlType || "") ||
+    field.type === "select-one" ||
+    field.type === "select-multiple" ||
+    field.role === "combobox"
+  );
+}
+
+function isEligibleWorkdaySafeField(field: DetectedField) {
+  if (!field.suggestedValue.trim() || !field.autoFillAllowed || field.confidence < SAFE_AUTOFILL_THRESHOLD) {
+    return false;
+  }
+
+  if (WORKDAY_SAFE_TEXT_INTENTS.has(field.intent) && isFillableWorkdayTextControl(field)) {
+    return true;
+  }
+
+  return WORKDAY_SAFE_SELECT_INTENTS.has(field.intent) && isFillableWorkdaySelectControl(field) && Boolean(field.matchedOption || field.suggestedValue.trim());
+}
+
 export function applyWorkdaySafeModeRules(
   fields: DetectedField[],
   options: {
@@ -303,13 +332,23 @@ export function applyWorkdaySafeModeRules(
       return next;
     }
 
-    if (WORKDAY_REPEATABLE_SECTION_INTENTS.has(next.intent)) {
+    if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
+      clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+      return next;
+    }
+
+    if (WORKDAY_REPEATABLE_SECTION_INTENTS.has(next.intent) && !isEligibleWorkdaySafeField(next)) {
       clearFieldForManualReview(next, "This section requires manual setup");
       return next;
     }
 
-    if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
-      clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+    if (WORKDAY_SAFE_SELECT_INTENTS.has(next.intent)) {
+      if (!isFillableWorkdaySelectControl(next) || !next.matchedOption) {
+        clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+        return next;
+      }
+      next.status = "needs_review";
+      next.reason = `${next.reason} Safe to autofill on this Workday page.`;
       return next;
     }
 
@@ -348,8 +387,7 @@ export function buildWorkdayExecutionPlan(fields: DetectedField[], metrics: Work
         field.status === "needs_review" &&
         field.autoFillAllowed &&
         field.suggestedValue.trim() &&
-        WORKDAY_SAFE_TEXT_INTENTS.has(field.intent) &&
-        isFillableWorkdayTextControl(field)
+        isEligibleWorkdaySafeField(field)
     )
     .map((field) => {
       const metric = metricById.get(field.id);
