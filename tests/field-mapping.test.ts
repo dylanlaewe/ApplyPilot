@@ -109,3 +109,38 @@ test("ordinary school fields keep the saved school value when there is no fallba
   assert.equal(field.intent, "education_school");
   assert.equal(field.suggestedValue, "Marist College");
 });
+
+test("duplicate helper resume upload controls are suppressed when a real resume field is present", () => {
+  const profile = createProfile();
+  const answerBank = createDefaultAnswerBank();
+  const fields = buildSuggestedFields(
+    [
+      rawField({
+        label: "Autofill from resume Upload your resume here to autofill key application fields",
+        nearbyText: "Upload your resume here to autofill key application fields",
+        type: "file",
+        controlType: "file",
+        selector: "#resume-helper"
+      }),
+      rawField({
+        label: "Resume",
+        name: "_systemfield_resume",
+        domId: "_systemfield_resume",
+        type: "file",
+        controlType: "file",
+        selector: "#resume"
+      }),
+      rawField({
+        label: "LinkedIn URL",
+        type: "text",
+        selector: "#linkedin"
+      })
+    ],
+    profile,
+    answerBank
+  );
+
+  assert.equal(fields.filter((field) => field.intent === "resume_upload").length, 1);
+  assert.equal(fields.find((field) => field.intent === "resume_upload")?.label, "Resume");
+  assert.equal(fields.find((field) => field.intent === "linkedin")?.label, "LinkedIn URL");
+});

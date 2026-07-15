@@ -40,13 +40,29 @@ const INTENT_PATTERNS: IntentPattern[] = [
   },
   {
     intent: "work_authorization",
-    patterns: [/authorized to work/, /legally eligible/, /employment authorization/, /work authorization/, /unrestricted work authorization/],
-    allowedTypes: ["select-one", "select-multiple", "radio", "checkbox", "text"]
+    patterns: [
+      /authorized to work/,
+      /authorized to work in the u\.?s\.?/,
+      /legally eligible/,
+      /legally authorized/,
+      /employment authorization/,
+      /work authorization/,
+      /unrestricted work authorization/
+    ],
+    allowedTypes: ["select-one", "select-multiple", "radio", "checkbox", "text", "search"]
   },
   {
     intent: "sponsorship",
-    patterns: [/require sponsorship/, /need sponsorship/, /visa sponsorship/, /h-1b/, /without sponsorship/, /able to work without sponsorship/],
-    allowedTypes: ["select-one", "select-multiple", "radio", "checkbox", "text"]
+    patterns: [
+      /require sponsorship/,
+      /need sponsorship/,
+      /visa sponsorship/,
+      /employment visa status/,
+      /h-1b/,
+      /without sponsorship/,
+      /able to work without sponsorship/
+    ],
+    allowedTypes: ["select-one", "select-multiple", "radio", "checkbox", "text", "search"]
   },
   { intent: "relocation", patterns: [/relocation/, /willing to relocate/], allowedTypes: ["select-one", "radio", "checkbox", "text"] },
   { intent: "remote_preference", patterns: [/\bremote\b/], allowedTypes: ["select-one", "radio", "checkbox", "text"] },

@@ -18,6 +18,17 @@ type ControlOption = {
   text: string;
 };
 
+const PORTAL_OPTION_SELECTORS = [
+  '[role="option"]',
+  '[role="listitem"]',
+  '[data-automation-id="menuItem"]',
+  '[data-automation-id="promptOption"]',
+  '[data-radix-collection-item]',
+  '[cmdk-item]',
+  'li[aria-selected]',
+  'button[role="option"]'
+].join(", ");
+
 export async function fillNativeSelect(frame: Frame, selector: string, value: string) {
   const options = await frame.locator(selector).evaluate((element) => {
     if (!(element instanceof HTMLSelectElement)) return [];
@@ -40,46 +51,77 @@ export async function fillNativeSelect(frame: Frame, selector: string, value: st
   await frame.locator(selector).selectOption(exact.value);
 }
 
-async function visiblePortalOptions(frame: Frame) {
-  return frame.evaluate(() => {
-    const candidates = Array.from(
-      document.querySelectorAll(
-        [
-          '[role="option"]',
-          '[role="listitem"]',
-          '[data-automation-id="menuItem"]',
-          '[data-automation-id="promptOption"]',
-          '[data-radix-collection-item]',
-          '[cmdk-item]',
-          'li[aria-selected]',
-          'button[role="option"]'
-        ].join(", ")
-      )
-    );
+async function visiblePortalOptions(frame: Frame, field?: DetectedField) {
+  const optionScopes: string[] = [];
 
-    return candidates
-      .filter((element) => {
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+  if (field) {
+    const locator = frame.locator(field.selector).first();
+    const [targetId, ariaControls, ariaOwns] = await Promise.all([
+      locator.getAttribute("id").catch(() => ""),
+      locator.getAttribute("aria-controls").catch(() => ""),
+      locator.getAttribute("aria-owns").catch(() => "")
+    ]);
+
+    for (const relatedId of [ariaControls || "", ariaOwns || "", targetId ? `react-select-${targetId}-listbox` : ""]) {
+      if (!relatedId) continue;
+      optionScopes.push(`[id="${relatedId}"] ${PORTAL_OPTION_SELECTORS}`);
+    }
+
+    const nearbyMenuSelector = await locator
+      .evaluate((element) => {
+        const menu = element
+          .closest(".select, .select__container, .field-wrapper, .form-field, .form-group")
+          ?.querySelector(".select__menu, [role='listbox']");
+        if (!(menu instanceof HTMLElement)) return "";
+        const id = menu.getAttribute("data-applypilot-scope-id") || `applypilot-scope-${Math.random().toString(36).slice(2)}`;
+        menu.setAttribute("data-applypilot-scope-id", id);
+        return `[data-applypilot-scope-id="${id}"] ${PORTAL_OPTION_SELECTORS}`;
       })
-      .map((element, index) => {
-        const id = element.getAttribute("data-applypilot-option-id") || `applypilot-option-${index}`;
-        element.setAttribute("data-applypilot-option-id", id);
-        return {
-          selector: `[data-applypilot-option-id="${id}"]`,
-          text: (element.textContent || "").replace(/\s+/g, " ").trim()
-        };
-      })
-      .filter((item) => item.text);
-  });
+      .catch(() => "");
+    if (nearbyMenuSelector) {
+      optionScopes.push(nearbyMenuSelector);
+    }
+  }
+
+  const dedupe = new Map<string, ControlOption>();
+  const selectorsToTry = [...optionScopes, PORTAL_OPTION_SELECTORS];
+  const markerPrefix = `applypilot-option-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  for (const selector of selectorsToTry) {
+    const locator = frame.locator(selector);
+    const count = await locator.count().catch(() => 0);
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index);
+      const visible = await candidate.isVisible().catch(() => false);
+      if (!visible) continue;
+      const marker = await candidate
+        .evaluate((element, payload) => {
+          const id = `${payload.prefix}-${payload.index}`;
+          element.setAttribute("data-applypilot-option-id", id);
+          return id;
+        }, { prefix: markerPrefix, index })
+        .catch(() => "");
+      if (!marker) continue;
+      const text = ((await candidate.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      dedupe.set(marker, {
+        selector: `[data-applypilot-option-id="${marker}"]`,
+        text
+      });
+    }
+    if (dedupe.size) {
+      return Array.from(dedupe.values());
+    }
+  }
+
+  return [];
 }
 
-async function waitForVisiblePortalOptions(frame: Frame, timeoutMs = 3_000) {
+async function waitForVisiblePortalOptions(frame: Frame, field?: DetectedField, timeoutMs = 3_000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const options = await visiblePortalOptions(frame);
+    const options = await visiblePortalOptions(frame, field);
     if (options.length) {
       return options;
     }
@@ -102,7 +144,7 @@ async function openControl(frame: Frame, field: DetectedField) {
         .then(() => true)
         .catch(() => false);
       if (retried) {
-        let options = await waitForVisiblePortalOptions(frame, 750);
+        let options = await waitForVisiblePortalOptions(frame, field, 750);
         if (options.length) return options;
       }
     }
@@ -116,19 +158,19 @@ async function openControl(frame: Frame, field: DetectedField) {
     });
   }
 
-  let options = await waitForVisiblePortalOptions(frame, 750);
+  let options = await waitForVisiblePortalOptions(frame, field, 750);
   if (options.length) return options;
 
   await locator.press("ArrowDown").catch(() => undefined);
-  options = await waitForVisiblePortalOptions(frame, 750);
+  options = await waitForVisiblePortalOptions(frame, field, 750);
   if (options.length) return options;
 
   await locator.press(" ").catch(() => undefined);
-  options = await waitForVisiblePortalOptions(frame, 750);
+  options = await waitForVisiblePortalOptions(frame, field, 750);
   if (options.length) return options;
 
   await locator.press("Enter").catch(() => undefined);
-  return waitForVisiblePortalOptions(frame, 750);
+  return waitForVisiblePortalOptions(frame, field, 750);
 }
 
 async function typeSearchQuery(frame: Frame, field: DetectedField, value: string) {
@@ -136,20 +178,44 @@ async function typeSearchQuery(frame: Frame, field: DetectedField, value: string
     field.intent === "city" || field.intent === "location" || field.intent === "full_location"
       ? value.split(",")[0]?.trim() || value
       : value;
+  const shouldTypeSequentially = ["city", "location", "full_location"].includes(field.intent);
   const locator = frame.locator(field.selector).first();
 
   const tagName = await locator.evaluate((element) => element.tagName.toLowerCase()).catch(() => "div");
   if (tagName === "input" || tagName === "textarea") {
-    await locator.fill("");
-    await locator.fill(searchValue);
+    const currentValue = await locator.inputValue().catch(() => "");
+    if (currentValue) {
+      await locator.fill("");
+    }
+    if (shouldTypeSequentially) {
+      await locator.pressSequentially(searchValue, { delay: 20 });
+    } else {
+      await locator.fill(searchValue);
+    }
     return;
   }
 
   const nestedInput = locator.locator('input, textarea, [role="combobox"]').first();
   if ((await nestedInput.count()) > 0) {
-    await nestedInput.fill("");
-    await nestedInput.fill(searchValue);
+    const currentValue = await nestedInput.inputValue().catch(() => "");
+    if (currentValue) {
+      await nestedInput.fill("");
+    }
+    if (shouldTypeSequentially) {
+      await nestedInput.pressSequentially(searchValue, { delay: 20 });
+    } else {
+      await nestedInput.fill(searchValue);
+    }
   }
+}
+
+async function finalizeSearchSelection(frame: Frame, field: DetectedField) {
+  if (!(field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.role === "combobox")) {
+    return;
+  }
+
+  await frame.locator(field.selector).first().press("Enter").catch(() => undefined);
+  await frame.waitForTimeout(100);
 }
 
 function matchControlOption(field: DetectedField, options: ControlOption[], value: string) {
@@ -221,32 +287,38 @@ async function selectMatchedOption(frame: Frame, options: ControlOption[], match
 
 export async function fillCustomCombobox(frame: Frame, field: DetectedField, value: string) {
   let options = await openControl(frame, field);
+  const isSearchableControl = field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.role === "combobox";
+  const needsAutocompleteSettle = ["city", "location", "full_location", "education_school", "education_major", "employer"].includes(field.intent);
 
   if (options.length) {
     const immediateMatch = matchControlOption(field, options, value);
     if (immediateMatch) {
       await selectMatchedOption(frame, options, immediateMatch.option);
+      await finalizeSearchSelection(frame, field);
       return;
     }
   }
 
-  if (!options.length && (field.controlType === "aria_combobox" || field.controlType === "autocomplete" || field.role === "combobox")) {
+  if (isSearchableControl) {
     await typeSearchQuery(frame, field, value);
-    options = await waitForVisiblePortalOptions(frame, 2_000);
+    options = await waitForVisiblePortalOptions(frame, field, 2_000);
+    if (options.length && needsAutocompleteSettle) {
+      await frame.waitForTimeout(250);
+      options = await waitForVisiblePortalOptions(frame, field, 500);
+    }
   }
 
   if (!options.length) {
     throw new Error("The dropdown did not open, so ApplyPilot could not inspect the available options.");
   }
 
-  await typeSearchQuery(frame, field, value);
-  options = await waitForVisiblePortalOptions(frame, 2_000);
   const match = matchControlOption(field, options, value);
   if (!match) {
     throw new Error("No matching dropdown option found.");
   }
 
   await selectMatchedOption(frame, options, match.option);
+  await finalizeSearchSelection(frame, field);
 }
 
 export async function fillAutocompleteControl(frame: Frame, field: DetectedField, value: string) {

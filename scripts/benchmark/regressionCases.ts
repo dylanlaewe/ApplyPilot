@@ -264,7 +264,7 @@ export const regressionCases: RegressionCase[] = [
         path: "/workable",
         heading: "Workable Application",
         expectations: [
-          { step: 1, label: "Phone", selector: "#workable_phone", expected: "+1 6175550117", required: true, control: "text" },
+          { step: 1, label: "Phone", selector: "#workable_phone", expected: "+1 6178338317", required: true, control: "text" },
           {
             step: 1,
             label: "Desired salary range",

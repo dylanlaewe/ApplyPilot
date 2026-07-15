@@ -194,6 +194,105 @@ test("custom menu-button dropdowns work through the custom adapter", async () =>
   assert.equal(result.actualValue.trim(), "Secret");
 });
 
+test("custom comboboxes prefer the active control's options over unrelated hidden lists", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <div style="display:none">
+      <ul>
+        <li role="option">Hidden wrong option</li>
+      </ul>
+    </div>
+    <div class="select">
+      <label for="candidate-location">Location</label>
+      <input id="candidate-location" role="combobox" class="select__input" aria-autocomplete="list" />
+      <div class="select__menu">
+        <div id="react-select-candidate-location-listbox" role="listbox">
+          <div role="option">Boston, Massachusetts, United States</div>
+          <div role="option">Boston, Lincolnshire, United Kingdom</div>
+        </div>
+      </div>
+    </div>
+    <script>
+      const input = document.getElementById('candidate-location');
+      for (const option of document.querySelectorAll('#react-select-candidate-location-listbox [role="option"]')) {
+        option.addEventListener('click', () => {
+          input.value = option.textContent.trim();
+          input.setAttribute('aria-invalid', 'false');
+        });
+      }
+    </script>
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Location",
+      selector: "#candidate-location",
+      type: "text",
+      controlType: "aria_combobox",
+      role: "combobox",
+      intent: "city"
+    }),
+    "Boston, Massachusetts, United States"
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(await page.locator("#candidate-location").inputValue(), "Boston, Massachusetts, United States");
+});
+
+test("searchable comboboxes do not retype once the correct options are visible", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <div class="application-question">
+      <label for="candidate-location">Location</label>
+      <div class="select__container">
+        <input id="candidate-location" role="combobox" aria-autocomplete="list" aria-invalid="true" />
+        <div class="select__single-value"></div>
+      </div>
+      <div id="react-select-candidate-location-listbox" role="listbox" style="display:none">
+        <div role="option">Boston, Massachusetts, United States</div>
+        <div role="option">Boston, Lincolnshire, United Kingdom</div>
+      </div>
+    </div>
+    <script>
+      const input = document.getElementById('candidate-location');
+      const wrapper = document.querySelector('.select__container');
+      const selected = document.querySelector('.select__single-value');
+      const list = document.getElementById('react-select-candidate-location-listbox');
+      let inputCount = 0;
+      input.addEventListener('input', () => {
+        inputCount += 1;
+        list.style.display = 'block';
+      });
+      for (const option of list.querySelectorAll('[role="option"]')) {
+        option.addEventListener('click', () => {
+          selected.textContent = option.textContent.trim();
+          input.value = '';
+          list.style.display = 'none';
+          input.setAttribute('aria-invalid', inputCount === 1 ? 'false' : 'true');
+          wrapper.setAttribute('data-input-count', String(inputCount));
+        });
+      }
+    </script>
+  `);
+
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Location",
+      selector: "#candidate-location",
+      type: "text",
+      controlType: "aria_combobox",
+      role: "combobox",
+      intent: "city"
+    }),
+    "Boston, Massachusetts, United States"
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(await page.locator(".select__container").getAttribute("data-input-count"), "1");
+});
+
 test("radio groups verify the selected option instead of the first input in the group", async () => {
   if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
   await page.setContent(`

@@ -10,6 +10,31 @@ function toConfidenceLevel(confidence: number): ConfidenceLevel {
   return "needs_review";
 }
 
+function suppressDuplicateResumeHelpers(fields: DetectedField[]) {
+  const resumeFields = fields.filter((field) => field.intent === "resume_upload");
+  if (resumeFields.length <= 1) {
+    return fields;
+  }
+
+  const hasPrimaryResumeField = resumeFields.some((field) => {
+    const text = normalizeText([field.label, field.questionText, field.nearbyText, field.name, field.domId].filter(Boolean).join(" "));
+    return /\bresume\b/.test(text) && !/autofill from resume|upload your resume here to autofill/i.test(text);
+  });
+
+  if (!hasPrimaryResumeField) {
+    return fields;
+  }
+
+  return fields.filter((field) => {
+    if (field.intent !== "resume_upload") {
+      return true;
+    }
+
+    const text = normalizeText([field.label, field.questionText, field.nearbyText, field.name, field.domId].filter(Boolean).join(" "));
+    return !/autofill from resume|upload your resume here to autofill/i.test(text);
+  });
+}
+
 function toReviewCategory(field: {
   status: DetectedField["status"];
   isRequired?: boolean;
@@ -135,7 +160,9 @@ export function buildSuggestedFields(
   answerBank: AnswerBankItem[],
   sessionContext?: Pick<ApplicationSession, "company" | "roleTitle" | "source" | "notes" | "metadataSource">
 ) {
-  const detectedFields = rawFields.map((field) => suggestFieldValue(field, profile, answerBank, sessionContext));
+  const detectedFields = suppressDuplicateResumeHelpers(
+    rawFields.map((field) => suggestFieldValue(field, profile, answerBank, sessionContext))
+  );
   const hasSchoolFallbackTextField = detectedFields.some((field) => {
     if (field.intent !== "education_school") return false;
     const text = normalizeText([field.label, field.questionText, field.nearbyText].filter(Boolean).join(" "));
