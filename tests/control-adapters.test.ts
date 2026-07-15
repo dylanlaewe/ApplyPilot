@@ -293,6 +293,84 @@ test("searchable comboboxes do not retype once the correct options are visible",
   assert.equal(await page.locator(".select__container").getAttribute("data-input-count"), "1");
 });
 
+test("searchable comboboxes do not press enter after a click-committed selection", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <fieldset class="application-question">
+      <legend>Phone</legend>
+      <label for="country_combo">Country</label>
+      <div class="select__container">
+        <input id="country_combo" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-invalid="false" />
+        <div class="select__single-value"></div>
+      </div>
+      <div id="country_listbox" role="listbox" style="display:none">
+        <div role="option">United States (+1)</div>
+        <div role="option">Canada (+1)</div>
+      </div>
+
+      <label for="phone_field">Phone</label>
+      <input id="phone_field" type="tel" aria-invalid="false" />
+      <div id="phone_error" role="alert" style="display:none">Phone is required.</div>
+    </fieldset>
+    <script>
+      const countryInput = document.getElementById('country_combo');
+      const countryList = document.getElementById('country_listbox');
+      const selected = document.querySelector('.select__single-value');
+      const phone = document.getElementById('phone_field');
+      const phoneError = document.getElementById('phone_error');
+
+      const openList = () => {
+        countryList.style.display = 'block';
+        countryInput.setAttribute('aria-expanded', 'true');
+      };
+      const closeList = () => {
+        countryList.style.display = 'none';
+        countryInput.setAttribute('aria-expanded', 'false');
+      };
+
+      countryInput.addEventListener('click', openList);
+      countryInput.addEventListener('input', openList);
+
+      for (const option of countryList.querySelectorAll('[role="option"]')) {
+        option.addEventListener('click', () => {
+          selected.textContent = option.textContent.trim();
+          countryInput.value = '';
+          closeList();
+        });
+      }
+
+      countryInput.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' || countryInput.getAttribute('aria-expanded') === 'true') return;
+        phone.setAttribute('aria-invalid', 'true');
+        phone.setAttribute('aria-describedby', 'phone_error');
+        phoneError.style.display = 'block';
+      });
+
+      phone.addEventListener('input', () => {
+        phone.setAttribute('aria-invalid', 'false');
+        phone.removeAttribute('aria-describedby');
+        phoneError.style.display = 'none';
+      });
+    </script>
+  `);
+
+  await fillField(
+    page,
+    detectedField({
+      label: "Country",
+      selector: "#country_combo",
+      type: "text",
+      controlType: "aria_combobox",
+      role: "combobox",
+      intent: "phone_country_code"
+    }),
+    "United States (+1)"
+  );
+
+  assert.equal(await page.locator(".select__single-value").textContent(), "United States (+1)");
+  assert.equal(await page.locator("#phone_field").getAttribute("aria-invalid"), "false");
+});
+
 test("radio groups verify the selected option instead of the first input in the group", async () => {
   if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
   await page.setContent(`

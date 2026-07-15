@@ -214,7 +214,60 @@ async function finalizeSearchSelection(frame: Frame, field: DetectedField) {
     return;
   }
 
-  await frame.locator(field.selector).first().press("Enter").catch(() => undefined);
+  const locator = frame.locator(field.selector).first();
+  const [visibleOptions, commitState] = await Promise.all([
+    visiblePortalOptions(frame, field).catch(() => []),
+    locator
+      .evaluate((element) => {
+        const wrapper =
+          element.closest(".select__container, .select-shell, .field, .form-field, .form-group, .application-question") ??
+          element.parentElement;
+        const selectedValue =
+          (wrapper?.querySelector(".select__single-value")?.textContent || "").replace(/\s+/g, " ").trim() ||
+          (wrapper?.querySelector("#aria-selection")?.textContent || "")
+            .replace(/^option\s+/i, "")
+            .replace(/,\s*selected\.?/i, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        const expanded = element.getAttribute("aria-expanded") === "true";
+        const ariaInvalid = element.getAttribute("aria-invalid") === "true";
+
+        if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement)) {
+          return {
+            selectedValue,
+            expanded,
+            ariaInvalid,
+            controlInvalid: false
+          };
+        }
+
+        return {
+          selectedValue,
+          expanded,
+          ariaInvalid,
+          controlInvalid: !element.checkValidity()
+        };
+      })
+      .catch(() => ({
+        selectedValue: "",
+        expanded: false,
+        ariaInvalid: false,
+        controlInvalid: false
+      }))
+  ]);
+
+  const needsEnterCommit =
+    commitState.expanded ||
+    visibleOptions.length > 0 ||
+    commitState.ariaInvalid ||
+    commitState.controlInvalid ||
+    !commitState.selectedValue;
+
+  if (!needsEnterCommit) {
+    return;
+  }
+
+  await locator.press("Enter").catch(() => undefined);
   await frame.waitForTimeout(100);
 }
 
