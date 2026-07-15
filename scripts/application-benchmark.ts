@@ -80,6 +80,8 @@ type BenchmarkCase = {
   roleTitle: string;
   url: string;
   active?: boolean;
+  lastVerifiedAt?: string;
+  disabledReason?: string;
   availabilityRegression?: boolean;
   tags?: string[];
   expectedFieldTypes?: string[];
@@ -183,6 +185,10 @@ type MetricSummary = {
 };
 
 type BenchmarkCaseResult = {
+  suiteRunId: string;
+  suiteStartedAt: string;
+  caseStartedAt: string;
+  caseFinishedAt: string;
   id: string;
   ats: AtsName;
   phase: number;
@@ -260,6 +266,7 @@ type BenchmarkCaseResult = {
 };
 
 type BenchmarkSummary = {
+  runId: string;
   startedAt: string;
   finishedAt: string;
   selectedCaseIds: string[];
@@ -306,6 +313,16 @@ const NON_ANSWERABLE_AUDIT_PATH = path.join(DEBUG_DIR, "non-answerable-field-aud
 const COVERAGE_AUDIT_PATH = path.join(DEBUG_DIR, "coverage-audit.md");
 const AUTOCOMPLETE_AUDIT_PATH = path.join(DEBUG_DIR, "autocomplete-audit.md");
 const FILE_UPLOAD_AUDIT_PATH = path.join(DEBUG_DIR, "file-upload-audit.md");
+const SUITE_OUTPUT_PATHS = [
+  SUMMARY_PATH,
+  FAILURES_PATH,
+  BENCHMARK_REPORT_PATH,
+  GENERATED_ANSWERS_PATH,
+  NON_ANSWERABLE_AUDIT_PATH,
+  COVERAGE_AUDIT_PATH,
+  AUTOCOMPLETE_AUDIT_PATH,
+  FILE_UPLOAD_AUDIT_PATH
+] as const;
 
 const ENTRY_ACTION_PATTERNS = [
   /^apply$/i,
@@ -358,6 +375,33 @@ const SEVERE_INTENTS = new Set([
 
 function nowStamp() {
   return new Date().toISOString();
+}
+
+function buildSuiteRunId(startedAt: string) {
+  return `live-${startedAt.replace(/[:.]/g, "-")}`;
+}
+
+function resultBelongsToSuiteRun(result: Pick<BenchmarkCaseResult, "suiteRunId"> | null, suiteRunId: string) {
+  return Boolean(result && result.suiteRunId === suiteRunId);
+}
+
+async function clearSuiteArtifactsForCases(testCases: BenchmarkCase[]) {
+  await Promise.all(SUITE_OUTPUT_PATHS.map((filePath) => rm(filePath, { force: true }).catch(() => undefined)));
+  await Promise.all(
+    testCases.flatMap((testCase) => [
+      rm(path.join(DEBUG_DIR, testCase.id), { recursive: true, force: true }).catch(() => undefined),
+      rm(path.join(TRACE_DIR, `${testCase.id}.zip`), { force: true }).catch(() => undefined),
+      rm(path.join(FIELD_INVENTORY_DIR, `${testCase.id}.json`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-1-before.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-1-after.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-2-before.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-2-after.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-3-before.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-3-after.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-4-before.png`), { force: true }).catch(() => undefined),
+      rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-4-after.png`), { force: true }).catch(() => undefined)
+    ])
+  );
 }
 
 function roundRatio(numerator: number, denominator: number) {
@@ -422,7 +466,10 @@ function readArgValues(flag: string, args: string[]) {
 
 function parseArgs(args: string[]) {
   const ats = readArgValue("--ats", args);
-  const caseId = readArgValue("--case", args);
+  const caseIds = readArgValues("--case", args)
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
   const phaseValue = readArgValue("--phase", args);
   const fromCase = readArgValue("--from-case", args);
   const caseTimeoutValue = readArgValue("--case-timeout", args);
@@ -437,7 +484,7 @@ function parseArgs(args: string[]) {
 
   return {
     ats: ats ? ats.toLowerCase() : "",
-    caseId: caseId ? caseId.toLowerCase() : "",
+    caseIds,
     fromCase: fromCase ? fromCase.toLowerCase() : "",
     phase: Number.isFinite(phase) ? phase : null,
     failedOnly,
@@ -789,7 +836,7 @@ async function restoreCurrentState(state: SavedState) {
 function loadCasesFromArgs(args: ReturnType<typeof parseArgs>) {
   let selected = CASES.slice();
 
-  if (!args.caseId && !args.ats && args.phase === null && !args.failedOnly && !args.fromCase && !args.resume && !args.skipCases.length) {
+  if (!args.caseIds.length && !args.ats && args.phase === null && !args.failedOnly && !args.fromCase && !args.resume && !args.skipCases.length) {
     selected = selected.filter((testCase) => testCase.active !== false && !testCase.availabilityRegression);
   }
 
@@ -797,8 +844,9 @@ function loadCasesFromArgs(args: ReturnType<typeof parseArgs>) {
     selected = selected.filter((testCase) => testCase.ats === args.ats);
   }
 
-  if (args.caseId) {
-    selected = selected.filter((testCase) => testCase.id === args.caseId);
+  if (args.caseIds.length) {
+    const selectedIds = new Set(args.caseIds);
+    selected = selected.filter((testCase) => selectedIds.has(testCase.id));
   }
 
   if (args.phase !== null) {
@@ -1600,10 +1648,11 @@ function manualEffortFromInventory(records: BenchmarkFieldRecord[], retriesRequi
   };
 }
 
-async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
+async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, suiteRunId: string, suiteStartedAt: string) {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   await rm(caseDir, { recursive: true, force: true }).catch(() => undefined);
   await mkdir(caseDir, { recursive: true });
+  const caseStartedAt = nowStamp();
 
   const screenshotPaths: string[] = [];
   const manualBarriers: string[] = [];
@@ -1762,6 +1811,10 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
       }
 
       const result: BenchmarkCaseResult = {
+        suiteRunId,
+        suiteStartedAt,
+        caseStartedAt,
+        caseFinishedAt: nowStamp(),
         id: testCase.id,
         ats: testCase.ats,
         phase: testCase.phase,
@@ -1865,6 +1918,10 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
     source: "none"
   };
   const fallbackResult: BenchmarkCaseResult = {
+    suiteRunId,
+    suiteStartedAt,
+    caseStartedAt,
+    caseFinishedAt: nowStamp(),
     id: testCase.id,
     ats: testCase.ats,
     phase: testCase.phase,
@@ -1967,22 +2024,27 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
   return fallbackResult;
 }
 
-async function readPersistedCaseReport(reportPath: string) {
+async function readPersistedCaseReport(reportPath: string, suiteRunId: string) {
   try {
     const raw = await readFile(reportPath, "utf8");
-    return JSON.parse(raw) as BenchmarkCaseResult;
+    const parsed = JSON.parse(raw) as BenchmarkCaseResult;
+    return resultBelongsToSuiteRun(parsed, suiteRunId) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string): BenchmarkCaseResult {
+function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string, suiteRunId: string, suiteStartedAt: string): BenchmarkCaseResult {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   const tracePath = path.join(TRACE_DIR, `${testCase.id}.zip`);
   const fieldInventoryPath = path.join(FIELD_INVENTORY_DIR, `${testCase.id}.json`);
   const reportPath = path.join(caseDir, "report.json");
 
   return {
+    suiteRunId,
+    suiteStartedAt,
+    caseStartedAt: startedAt,
+    caseFinishedAt: nowStamp(),
     id: testCase.id,
     ats: testCase.ats,
     phase: testCase.phase,
@@ -2084,10 +2146,12 @@ function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string): Benchma
 function mergeTimedOutCaseResult(
   testCase: BenchmarkCase,
   startedAt: string,
+  suiteRunId: string,
+  suiteStartedAt: string,
   partial: BenchmarkCaseResult | null
 ): BenchmarkCaseResult {
   if (!partial) {
-    return timedOutCaseResult(testCase, startedAt);
+    return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt);
   }
 
   if (partial.status === "completed" || partial.status === "manual_barrier" || partial.status === "site_unavailable" || partial.status === "not_scorable") {
@@ -2097,22 +2161,31 @@ function mergeTimedOutCaseResult(
   return {
     ...partial,
     status: "timeout",
+    suiteRunId,
+    suiteStartedAt,
+    caseFinishedAt: nowStamp(),
     manualBarriers: Array.from(new Set([`Case timed out after the configured limit. Started ${startedAt}.`, ...partial.manualBarriers])),
     warnings: Array.from(new Set(["Timed out before the benchmark case completed.", ...partial.warnings])),
     submitted: false
   };
 }
 
-async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFixtures, caseTimeoutMs: number) {
+async function runCaseWithTimeout(
+  testCase: BenchmarkCase,
+  fixtures: SyntheticFixtures,
+  caseTimeoutMs: number,
+  suiteRunId: string,
+  suiteStartedAt: string
+) {
   if (!caseTimeoutMs) {
-    return runCase(testCase, fixtures);
+    return runCase(testCase, fixtures, suiteRunId, suiteStartedAt);
   }
 
   const startedAt = nowStamp();
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let settledResult: BenchmarkCaseResult | null = null;
-  const casePromise = runCase(testCase, fixtures)
+  const casePromise = runCase(testCase, fixtures, suiteRunId, suiteStartedAt)
     .then((result) => {
       settledResult = result;
       return result;
@@ -2121,10 +2194,10 @@ async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFi
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
       }
-    })
+  })
     .catch((error) => {
     if (timedOut) {
-      return timedOutCaseResult(testCase, startedAt);
+      return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt);
     }
     throw error;
   });
@@ -2132,7 +2205,7 @@ async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFi
   const timeoutPromise = new Promise<BenchmarkCaseResult>((resolve) => {
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      resolve(timedOutCaseResult(testCase, startedAt));
+      resolve(timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt));
     }, caseTimeoutMs);
   });
 
@@ -2150,14 +2223,17 @@ async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFi
     return graceSettled.result;
   }
 
-  const persistedResult = await readPersistedCaseReport(timedOutCaseResult(testCase, startedAt).reportPath);
+  const persistedResult = await readPersistedCaseReport(
+    timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt).reportPath,
+    suiteRunId
+  );
   if (persistedResult && persistedResult.status !== "timeout") {
     return persistedResult;
   }
 
   await resetBrowserManagerForTests().catch(() => undefined);
 
-  const timedOutResult = mergeTimedOutCaseResult(testCase, startedAt, persistedResult ?? settledResult);
+  const timedOutResult = mergeTimedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, persistedResult ?? settledResult);
   await writeFile(timedOutResult.fieldInventoryPath, JSON.stringify(timedOutResult.stageResults, null, 2), "utf8").catch(() => undefined);
   await writeFile(timedOutResult.reportPath, JSON.stringify(timedOutResult, null, 2), "utf8").catch(() => undefined);
   return timedOutResult;
@@ -2753,12 +2829,19 @@ async function writeAtsReports(results: BenchmarkCaseResult[]) {
 
 async function main() {
   await ensureDirs();
-  const startedAt = nowStamp();
+  const freshStartedAt = nowStamp();
   const args = parseArgs(process.argv.slice(2));
   const previouslySaved = args.resume && existsSync(SUMMARY_PATH) ? (JSON.parse(readFileSync(SUMMARY_PATH, "utf8")) as BenchmarkSummary) : null;
-  const previousResults = previouslySaved?.byApplication ?? [];
+  const runId = args.resume && previouslySaved?.runId ? previouslySaved.runId : buildSuiteRunId(freshStartedAt);
+  const startedAt = args.resume && previouslySaved?.startedAt ? previouslySaved.startedAt : freshStartedAt;
+  const resumableSummary = args.resume ? previouslySaved : null;
+  const selectedCases = loadCasesFromArgs(args);
+  if (!args.resume) {
+    await clearSuiteArtifactsForCases(selectedCases);
+  }
+  const previousResults = resumableSummary?.byApplication ?? [];
   const completedIds = new Set(previousResults.map((result) => result.id));
-  const casesToRun = loadCasesFromArgs(args).filter((testCase) => !completedIds.has(testCase.id));
+  const casesToRun = selectedCases.filter((testCase) => !completedIds.has(testCase.id));
 
   if (!casesToRun.length && !previousResults.length) {
     throw new Error("No benchmark cases matched the provided filters.");
@@ -2773,7 +2856,7 @@ async function main() {
     const results: BenchmarkCaseResult[] = [...previousResults];
     for (const testCase of casesToRun) {
       try {
-        results.push(await runCaseWithTimeout(testCase, fixtures, args.caseTimeoutMs));
+        results.push(await runCaseWithTimeout(testCase, fixtures, args.caseTimeoutMs, runId, startedAt));
       } finally {
         await resetBrowserManagerForTests().catch(() => undefined);
       }
@@ -2786,6 +2869,7 @@ async function main() {
     );
 
     const summary: BenchmarkSummary = {
+      runId,
       startedAt,
       finishedAt: nowStamp(),
       selectedCaseIds: results.map((result) => result.id),
@@ -2831,4 +2915,4 @@ if (isDirectRun) {
     });
 }
 
-export { buildMetric, buildOverallSummary, mergeTimedOutCaseResult };
+export { buildMetric, buildOverallSummary, mergeTimedOutCaseResult, resultBelongsToSuiteRun };

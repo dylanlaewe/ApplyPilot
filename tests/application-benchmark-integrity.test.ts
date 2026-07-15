@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOverallSummary, mergeTimedOutCaseResult } from "@/scripts/application-benchmark";
+import { buildOverallSummary, mergeTimedOutCaseResult, resultBelongsToSuiteRun } from "@/scripts/application-benchmark";
 
 function createResult(overrides: Record<string, unknown> = {}) {
   return {
+    suiteRunId: "suite-1",
+    suiteStartedAt: "2026-07-12T00:00:00.000Z",
+    caseStartedAt: "2026-07-12T00:00:01.000Z",
+    caseFinishedAt: "2026-07-12T00:00:02.000Z",
     id: "case-1",
     ats: "greenhouse" as const,
     phase: 1,
@@ -124,9 +128,38 @@ test("mergeTimedOutCaseResult preserves a persisted completed case instead of do
       url: "https://example.com/apply"
     },
     "2026-07-12T00:00:00.000Z",
+    "suite-1",
+    "2026-07-12T00:00:00.000Z",
     createResult({ status: "completed" })
   );
 
   assert.equal(merged.status, "completed");
   assert.deepEqual(merged.manualBarriers, []);
+});
+
+test("mergeTimedOutCaseResult stamps the active suite metadata onto timeout results", () => {
+  const merged = mergeTimedOutCaseResult(
+    {
+      id: "case-3",
+      ats: "workable",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    "2026-07-15T15:00:00.000Z",
+    "suite-fresh",
+    "2026-07-15T14:59:00.000Z",
+    createResult({ status: "failed_runtime", suiteRunId: "suite-old" })
+  );
+
+  assert.equal(merged.status, "timeout");
+  assert.equal(merged.suiteRunId, "suite-fresh");
+  assert.equal(merged.suiteStartedAt, "2026-07-15T14:59:00.000Z");
+});
+
+test("resultBelongsToSuiteRun rejects stale case reports from an older suite run", () => {
+  assert.equal(resultBelongsToSuiteRun(createResult({ suiteRunId: "suite-current" }), "suite-current"), true);
+  assert.equal(resultBelongsToSuiteRun(createResult({ suiteRunId: "suite-older" }), "suite-current"), false);
+  assert.equal(resultBelongsToSuiteRun(null, "suite-current"), false);
 });

@@ -7,6 +7,7 @@
     "roleTitle": "Fullstack Software Engineer - Business Solutions",
     "url": "https://job-boards.greenhouse.io/dataiku/jobs/5963977004",
     "active": false,
+    "disabledReason": "The Greenhouse listing now redirects to an error page instead of a live application.",
     "tags": ["structured", "short-answer", "generatable"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -18,7 +19,7 @@
     "roleTitle": "Staff Software Engineer",
     "url": "https://job-boards.greenhouse.io/codeforamerica/jobs/7081271",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "short-answer", "file_upload"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -30,7 +31,7 @@
     "roleTitle": "Software Engineer - Platforms & Productivity",
     "url": "https://job-boards.greenhouse.io/cloudflare/jobs/6972536?gh_jid=6972536",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "file_upload", "metadata"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -41,7 +42,8 @@
     "company": "Electrosoft",
     "roleTitle": "Customer Support Representative I",
     "url": "https://job-boards.greenhouse.io/electrosoft/jobs/4272628009?utm_source=chatgpt.com",
-    "active": false,
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "reference"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -53,6 +55,7 @@
     "roleTitle": "General Application, U.S. Positions",
     "url": "https://job-boards.greenhouse.io/verisign/jobs/4403206003",
     "active": false,
+    "disabledReason": "Held as reserve Greenhouse coverage because the active set already covers cleaner role-specific flows.",
     "tags": ["structured", "general-application"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -64,7 +67,7 @@
     "roleTitle": "Cybersecurity Internship Fall 2026 - Federal",
     "url": "https://jobs.lever.co/tevora/335ec3e2-c7ee-4e4c-b4a9-04428999e954/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "metadata", "file_upload"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -76,7 +79,7 @@
     "roleTitle": "Product Success Specialist (Remote)",
     "url": "https://jobs.lever.co/peoplegrove/bb2ee766-a420-4fe9-bac7-fa0a41caffa5/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "short-answer", "lever"],
     "expectedFieldTypes": ["text", "dropdown", "short_answer"]
   },
@@ -88,6 +91,7 @@
     "roleTitle": "Enhanced Direct Enrollment Product Owner",
     "url": "https://jobs.lever.co/elementsolutions/6059374a-9253-4b7f-95ce-4f1f47fd7246/apply",
     "active": false,
+    "disabledReason": "The Lever application returns 404.",
     "tags": ["structured"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -98,7 +102,8 @@
     "company": "Swiftly",
     "roleTitle": "Senior Product Designer",
     "url": "https://jobs.lever.co/goswift/d446e305-3904-4cc6-b11b-77a4aea2b0f3/apply",
-    "active": false,
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -110,6 +115,7 @@
     "roleTitle": "Developer Intern, Trust Platforms - Fall 2026",
     "url": "https://jobs.ashbyhq.com/1password/8f8774dc-e400-48b1-8100-c6840b8eaed1/application",
     "active": false,
+    "disabledReason": "Held as reserve Ashby coverage because the active Ashby set already covers the current structured flows.",
     "tags": ["structured", "short-answer", "missing-fact"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -121,7 +127,7 @@
     "roleTitle": "Security Engineer, Application Security",
     "url": "https://jobs.ashbyhq.com/mercor/cf6fcf5a-6348-4d60-beb3-43333a2c2bb9/application",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "file_upload", "ashby"],
     "expectedFieldTypes": ["text", "file_upload"]
   },
@@ -133,7 +139,7 @@
     "roleTitle": "Fraud Specialist",
     "url": "https://jobs.ashbyhq.com/novig/bd216331-c180-4534-b203-336d34c63ab9/application",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "file_upload", "ashby"],
     "expectedFieldTypes": ["text", "file_upload"]
   },
@@ -145,6 +151,7 @@
     "roleTitle": "Special Education Teacher",
     "url": "https://jobs.ashbyhq.com/new-story-schools-oh/a498d01c-cccb-4668-a7ff-4e06f3dde0bc/application",
     "active": false,
+    "disabledReason": "Held as reserve Ashby coverage because the active set already exercises the higher-priority file-upload flows.",
     "tags": ["structured"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -156,6 +163,7 @@
     "roleTitle": "Camp Counselor",
     "url": "https://apply.workable.com/jcc-greater-boston/j/388A8F957D/",
     "active": false,
+    "disabledReason": "Held as reserve Workable coverage because the active set already covers the current structured and upload flows.",
     "tags": ["structured", "autocomplete"],
     "expectedFieldTypes": ["text", "dropdown", "autocomplete", "file_upload"]
   },
@@ -167,7 +175,7 @@
     "roleTitle": "Senior Business Valuation Associate",
     "url": "https://apply.workable.com/reaadvisory/j/854D0A3C8F/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "file_upload", "workable"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -179,7 +187,7 @@
     "roleTitle": "Staff Software Engineer - Rust and Distributed Systems (Bay Area, hybrid)",
     "url": "https://apply.workable.com/fortanix/j/3AF145F86B/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "file_upload", "workable", "short-answer"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload", "short_answer"]
   },
@@ -191,7 +199,7 @@
     "roleTitle": "Software Engineer, Elixir",
     "url": "https://jobs.smartrecruiters.com/LevelAll/744000120818457-software-engineer-elixir-?oga=true",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "captcha-barrier", "smartrecruiters"],
     "expectedFieldTypes": ["captcha_barrier"]
   },
@@ -203,6 +211,7 @@
     "roleTitle": "Early Career System Hardware Design Engineer",
     "url": "https://apply.workable.com/tp-link-usa-corp/j/428D85D8DC/",
     "active": false,
+    "disabledReason": "Held as reserve Workable coverage because the active set already covers equivalent structured flows.",
     "tags": ["structured"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -214,6 +223,7 @@
     "roleTitle": "Technology Engineer Associate",
     "url": "https://jobs.smartrecruiters.com/cityandcountyofsanfrancisco1/3743990013780745-technology-engineer-associate-1041-applications-specialty-citywide-c00086-",
     "active": false,
+    "disabledReason": "Held as reserve SmartRecruiters coverage while Level All remains the active barrier-focused SmartRecruiters case.",
     "tags": ["structured", "experimental"],
     "expectedFieldTypes": ["text", "dropdown", "file_upload"]
   },
@@ -225,7 +235,43 @@
     "roleTitle": "Associate Director",
     "url": "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/jobs/details/Associate-Director--Community-Engaged-Data-and-Evaluation-Collaborative_REQ207311",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
+    "tags": ["experimental", "workday", "login-barrier"],
+    "expectedFieldTypes": ["text", "dropdown"]
+  },
+  {
+    "id": "redhat-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Red Hat",
+    "roleTitle": "Software Engineer",
+    "url": "https://redhat.wd5.myworkdayjobs.com/en-US/jobs/details/Software-Engineer_R-057018-1?q=software+engineer",
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
+    "tags": ["experimental", "workday", "login-barrier"],
+    "expectedFieldTypes": ["text", "dropdown"]
+  },
+  {
+    "id": "brandeis-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Brandeis University",
+    "roleTitle": "Web Content and Analytics Specialist",
+    "url": "https://brandeis.wd5.myworkdayjobs.com/en-US/Jobs/details/Web-Content-and-Analytics-Specialist_R0011431-1?q=web+content&source=JobTarget&utm_source=JobTarget",
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
+    "tags": ["experimental", "workday", "login-barrier"],
+    "expectedFieldTypes": ["text", "dropdown"]
+  },
+  {
+    "id": "amadeus-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Amadeus",
+    "roleTitle": "QA Engineer",
+    "url": "https://amadeus.wd502.myworkdayjobs.com/en-US/jobs/details/QA-Engineer_R33642-2?locations=444ed919e32d1000f5c2af08f0870000&q=software+testing",
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["experimental", "workday", "login-barrier"],
     "expectedFieldTypes": ["text", "dropdown"]
   },
@@ -237,7 +283,7 @@
     "roleTitle": "Java Software Engineer - Remote",
     "url": "https://jobs.jobvite.com/iboss/job/oev5zfw7/apply",
     "active": true,
-    "lastVerifiedAt": "2026-07-12",
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["structured", "jobvite", "entry-action-free"],
     "expectedFieldTypes": ["text", "file_upload", "navigation"]
   },
@@ -249,6 +295,7 @@
     "roleTitle": "High School History Teacher",
     "url": "https://jobs.jobvite.com/excel/job/oQZ0zfw8",
     "active": false,
+    "disabledReason": "The Jobvite listing now redirects to an error page and is kept only as a site-availability regression case.",
     "availabilityRegression": true,
     "tags": ["regression", "site-unavailable", "jobvite"],
     "expectedFieldTypes": ["site_availability"]
@@ -260,7 +307,8 @@
     "company": "Manager, Technical Support",
     "roleTitle": "Manager, Technical Support",
     "url": "https://careers.icims.com/careers-home/jobs/6474?lang=en-gb",
-    "active": false,
+    "active": true,
+    "lastVerifiedAt": "2026-07-15",
     "tags": ["experimental", "icims"],
     "expectedFieldTypes": ["text", "dropdown"]
   }
