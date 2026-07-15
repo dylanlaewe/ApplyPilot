@@ -9,7 +9,7 @@ import {
 import { buildJobContext } from "@/lib/jobContext";
 import { getApplicantProfile } from "@/lib/profile";
 import { getResumeFilename } from "@/lib/profileExperience";
-import { readStorageFile, writeStorageFile } from "@/lib/storage";
+import { readStorageFile, updateStorageFile, writeStorageFile } from "@/lib/storage";
 import { ApplicationSession, DashboardStats, DetectedField, NewSessionInput } from "@/types";
 
 const SESSIONS_FILE = "application-sessions.json";
@@ -116,11 +116,10 @@ export async function getApplicationSession(id: string) {
 }
 
 export async function createApplicationSession(input: NewSessionInput) {
-  const sessions = await getApplicationSessions();
   const profile = await getApplicantProfile();
   const session = buildDefaultSession(input, getResumeFilename(profile));
   session.auditLog.push(createAuditEntry(session.id, "session_created", "Application session created."));
-  await writeStorageFile(SESSIONS_FILE, [session, ...sessions]);
+  await updateStorageFile<ApplicationSession[]>(SESSIONS_FILE, [], (sessions) => [session, ...normalizeApplicationSessions(sessions)]);
   return session;
 }
 
@@ -128,39 +127,43 @@ export async function updateApplicationSession(
   id: string,
   updater: (session: ApplicationSession) => ApplicationSession
 ) {
-  const sessions = await getApplicationSessions();
   let updatedSession: ApplicationSession | null = null;
 
-  const nextSessions = sessions.map((session) => {
-    if (session.id !== id) return session;
-    const next = normalizeApplicationSession(updater(session));
-    const hydrated = {
-      ...next,
-      ...summarizeCounts(next.detectedFields),
-      updatedAt: new Date().toISOString()
-    };
-    hydrated.preparationSummary = derivePreparationSummary(hydrated);
-    if (!hydrated.applicationStatus) {
-      hydrated.applicationStatus = mapSessionStatusToApplicationStatus(hydrated.status);
-    }
-    if (!hydrated.statusHistory?.length) {
-      hydrated.statusHistory = normalizeApplicationSession(hydrated).statusHistory;
-    }
-    if (!hydrated.resumeDisplayLabel && hydrated.resumeUsed) {
-      hydrated.resumeDisplayLabel = hydrated.resumeUsed;
-    }
-    if (!hydrated.submissionConfirmationState) {
-      hydrated.submissionConfirmationState = hydrated.applicationStatus === "submitted" ? "submitted" : "unknown";
-    }
-    updatedSession = hydrated;
-    return hydrated;
+  const nextSessions = await updateStorageFile<ApplicationSession[]>(SESSIONS_FILE, [], (storedSessions) => {
+    const sessions = normalizeApplicationSessions(storedSessions);
+
+    const updated = sessions.map((session) => {
+      if (session.id !== id) return session;
+      const next = normalizeApplicationSession(updater(session));
+      const hydrated = {
+        ...next,
+        ...summarizeCounts(next.detectedFields),
+        updatedAt: new Date().toISOString()
+      };
+      hydrated.preparationSummary = derivePreparationSummary(hydrated);
+      if (!hydrated.applicationStatus) {
+        hydrated.applicationStatus = mapSessionStatusToApplicationStatus(hydrated.status);
+      }
+      if (!hydrated.statusHistory?.length) {
+        hydrated.statusHistory = normalizeApplicationSession(hydrated).statusHistory;
+      }
+      if (!hydrated.resumeDisplayLabel && hydrated.resumeUsed) {
+        hydrated.resumeDisplayLabel = hydrated.resumeUsed;
+      }
+      if (!hydrated.submissionConfirmationState) {
+        hydrated.submissionConfirmationState = hydrated.applicationStatus === "submitted" ? "submitted" : "unknown";
+      }
+      updatedSession = hydrated;
+      return hydrated;
+    });
+
+    return updated;
   });
 
   if (!updatedSession) {
     throw new Error("Session not found.");
   }
 
-  await writeStorageFile(SESSIONS_FILE, nextSessions);
   return updatedSession;
 }
 
@@ -247,13 +250,17 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 }
 
 export async function deleteApplicationSession(id: string) {
-  const sessions = await getApplicationSessions();
-  const nextSessions = sessions.filter((session) => session.id !== id);
-  if (nextSessions.length === sessions.length) {
+  let removed = false;
+  await updateStorageFile<ApplicationSession[]>(SESSIONS_FILE, [], (storedSessions) => {
+    const sessions = normalizeApplicationSessions(storedSessions);
+    const nextSessions = sessions.filter((session) => session.id !== id);
+    removed = nextSessions.length !== sessions.length;
+    return nextSessions;
+  });
+
+  if (!removed) {
     throw new Error("Session not found.");
   }
-
-  await writeStorageFile(SESSIONS_FILE, nextSessions);
 }
 
 export async function updateApplicationDisplayStatus(id: string, status: ApplicationSession["applicationStatus"]) {

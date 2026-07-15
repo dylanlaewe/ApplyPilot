@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --import tsx --test tests/*.test.ts tests/*.test.tsx",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts tests/*.test.tsx",
     "smoke:greenhouse": "node --import tsx scripts/smoke-greenhouse.ts",
     "benchmark:applications": "node --import tsx scripts/application-benchmark.ts",
     "benchmark:live": "node --import tsx scripts/application-benchmark.ts",

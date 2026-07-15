@@ -70,11 +70,20 @@ async function readGroupedChoiceState(pageOrFrame: Page | Frame, field: Detected
 
   for (let index = 0; index < count; index += 1) {
     const option = locator.nth(index);
-    const checked = await option.isChecked().catch(() => false);
+    const checked = await option
+      .evaluate((element) => {
+        const inputChecked = element instanceof HTMLInputElement ? element.checked : false;
+        const wrapper = element.closest("[role='radio'], [role='checkbox']");
+        const wrapperChecked =
+          wrapper?.getAttribute("aria-checked") === "true" || wrapper?.getAttribute("aria-selected") === "true";
+        return inputChecked || wrapperChecked;
+      })
+      .catch(() => false);
     const label = normalizeText(
       await option.evaluate((element) => {
         const linkedLabel =
           (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) ||
+          element.closest("[role='radio']")?.textContent ||
           element.closest("label")?.textContent ||
           "";
         return linkedLabel;
@@ -480,7 +489,13 @@ export async function verifyFilledValue(pageOrFrame: Page | Frame, field: Detect
 
   if (type === "radio") {
     if ((field.selectOptions?.length ?? 0) > 1) {
-      const states = field.name ? await readGroupedChoiceState(pageOrFrame, field, "radio") : await readNamelessRadioState(pageOrFrame, field);
+      let states = field.name ? await readGroupedChoiceState(pageOrFrame, field, "radio") : await readNamelessRadioState(pageOrFrame, field);
+      if (!states.some((state) => state.checked)) {
+        const wrapperStates = await readNamelessRadioState(pageOrFrame, field);
+        if (wrapperStates.length) {
+          states = wrapperStates;
+        }
+      }
       const options = states.map((state) => state.label);
       const matchedExpected =
         (expectedValue === "yes" || expectedValue === "no"

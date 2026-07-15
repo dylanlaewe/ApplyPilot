@@ -1,5 +1,7 @@
-import { mkdir } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { lstat, mkdir, readlink, rm, unlink } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import type { Browser, BrowserContext, Page } from "playwright";
 
@@ -24,6 +26,8 @@ const state =
 store.__applyPilotBrowserManager = state;
 
 const BROWSER_PROFILE_DIR = path.join(process.cwd(), "data", "browser-profile");
+const execFile = promisify(execFileCallback);
+const PERSISTENT_PROFILE_LOCK_FILES = ["SingletonLock", "SingletonCookie", "SingletonSocket", "RunningChromeVersion"] as const;
 
 async function getPlaywright() {
   return import("playwright");
@@ -35,6 +39,79 @@ function isContextAlive(context: BrowserContext | null) {
 
 function isBrowserAlive(browser: Browser | null) {
   return Boolean(browser?.isConnected());
+}
+
+export function isPersistentProfileLockError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Opening in existing browser session|SingletonLock|process_singleton_posix/i.test(message);
+}
+
+async function readProcessCommands() {
+  try {
+    const { stdout } = await execFile("ps", ["ax", "-o", "command="]);
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
+async function pathHasOpenHandle(filePath: string) {
+  if (!filePath) return false;
+
+  try {
+    const { stdout } = await execFile("lsof", [filePath]);
+    return Boolean(stdout.trim());
+  } catch {
+    return false;
+  }
+}
+
+export async function clearPersistentProfileSingletonArtifacts(
+  profileDir = BROWSER_PROFILE_DIR,
+  processCommands?: string
+) {
+  let removed = false;
+  const singletonSocketPath = path.join(profileDir, "SingletonSocket");
+  let socketTarget = "";
+
+  try {
+    const socketStats = await lstat(singletonSocketPath);
+    if (socketStats.isSymbolicLink()) {
+      socketTarget = path.resolve(profileDir, await readlink(singletonSocketPath));
+    }
+  } catch {
+    socketTarget = "";
+  }
+
+  if (socketTarget && (await pathHasOpenHandle(socketTarget))) {
+    return false;
+  }
+
+  const commands = processCommands ?? (await readProcessCommands());
+  if (!socketTarget && commands.includes(`--user-data-dir=${profileDir}`)) {
+    return false;
+  }
+
+  for (const fileName of PERSISTENT_PROFILE_LOCK_FILES) {
+    const filePath = path.join(profileDir, fileName);
+    try {
+      await unlink(filePath);
+      removed = true;
+    } catch {
+      try {
+        await rm(filePath, { force: true, recursive: true });
+        removed = true;
+      } catch {
+        // Ignore files that are already gone or not removable.
+      }
+    }
+  }
+
+  if (socketTarget) {
+    await rm(socketTarget, { force: true }).catch(() => undefined);
+  }
+
+  return removed;
 }
 
 async function disposeClosedPages() {
@@ -70,10 +147,26 @@ export async function getOrCreateBrowserContext() {
   }
 
   await mkdir(BROWSER_PROFILE_DIR, { recursive: true });
-  state.context = await chromium.launchPersistentContext(BROWSER_PROFILE_DIR, {
-    headless: false,
-    slowMo: 50
-  });
+  const launchPersistentContext = () =>
+    chromium.launchPersistentContext(BROWSER_PROFILE_DIR, {
+      headless: false,
+      slowMo: 50
+    });
+
+  try {
+    state.context = await launchPersistentContext();
+  } catch (error) {
+    if (!isPersistentProfileLockError(error)) {
+      throw error;
+    }
+
+    const cleared = await clearPersistentProfileSingletonArtifacts(BROWSER_PROFILE_DIR);
+    if (!cleared) {
+      throw error;
+    }
+
+    state.context = await launchPersistentContext();
+  }
   state.browser = state.context.browser();
   state.browser?.on("disconnected", () => {
     state.browser = null;

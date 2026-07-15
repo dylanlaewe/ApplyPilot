@@ -10,6 +10,7 @@ import {
   matchTextOption,
   matchWorkAuthorizationCategory
 } from "@/lib/optionMatcher";
+import { dismissCookieConsentIfPresent } from "@/lib/consentBarrier";
 import { normalizeText } from "@/lib/utils";
 
 type ControlOption = {
@@ -92,7 +93,20 @@ async function openControl(frame: Frame, field: DetectedField) {
   const locator = frame.locator(field.selector).first();
   try {
     await locator.click({ timeout: 10_000 });
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/intercepts pointer events/i.test(message)) {
+      await dismissCookieConsentIfPresent(frame.page(), { waitForAppearanceMs: 1_500 }).catch(() => false);
+      const retried = await locator
+        .click({ timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (retried) {
+        let options = await waitForVisiblePortalOptions(frame, 750);
+        if (options.length) return options;
+      }
+    }
+
     await locator.click({ timeout: 10_000, force: true }).catch(async () => {
       await locator.evaluate((element) => {
         if (element instanceof HTMLElement) {
@@ -190,7 +204,19 @@ async function selectMatchedOption(frame: Frame, options: ControlOption[], match
     throw new Error("No matching dropdown option found.");
   }
 
-  await frame.locator(matchedOption.selector).click({ timeout: 10_000 });
+  const locator = frame.locator(matchedOption.selector);
+  try {
+    await locator.click({ timeout: 10_000 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/intercepts pointer events/i.test(message)) {
+      await dismissCookieConsentIfPresent(frame.page(), { waitForAppearanceMs: 1_500 }).catch(() => false);
+      await locator.click({ timeout: 5_000 });
+      return;
+    }
+
+    throw error;
+  }
 }
 
 export async function fillCustomCombobox(frame: Frame, field: DetectedField, value: string) {

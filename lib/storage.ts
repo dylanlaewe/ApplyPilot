@@ -5,6 +5,24 @@ export const DATA_DIR = path.join(process.cwd(), "data");
 
 const writeQueues = new Map<string, Promise<void>>();
 
+async function queueFileWrite<T>(filePath: string, work: () => Promise<T>) {
+  const pending = writeQueues.get(filePath) ?? Promise.resolve();
+  let result!: T;
+  const nextWrite = pending.then(async () => {
+    result = await work();
+  });
+
+  writeQueues.set(
+    filePath,
+    nextWrite.catch(() => {
+      return;
+    })
+  );
+
+  await nextWrite;
+  return result;
+}
+
 export async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 }
@@ -44,19 +62,34 @@ export async function readStorageFile<T>(fileName: string, initialData: T): Prom
 
 export async function writeStorageFile<T>(fileName: string, data: T) {
   const filePath = await ensureStorageFile(fileName, data);
-  const pending = writeQueues.get(filePath) ?? Promise.resolve();
-  const nextWrite = pending.then(async () => {
+  await queueFileWrite(filePath, async () => {
     const tempPath = `${filePath}.tmp`;
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), "utf8");
     await fs.rename(tempPath, filePath);
   });
+}
 
-  writeQueues.set(
-    filePath,
-    nextWrite.catch(() => {
-      return;
-    })
-  );
+export async function updateStorageFile<T>(
+  fileName: string,
+  initialData: T,
+  updater: (current: T) => T | Promise<T>
+) {
+  const filePath = await ensureStorageFile(fileName, initialData);
 
-  await nextWrite;
+  return queueFileWrite(filePath, async () => {
+    let current = initialData;
+
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      current = JSON.parse(raw) as T;
+    } catch {
+      current = initialData;
+    }
+
+    const nextData = await updater(current);
+    const tempPath = `${filePath}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(nextData, null, 2), "utf8");
+    await fs.rename(tempPath, filePath);
+    return nextData;
+  });
 }

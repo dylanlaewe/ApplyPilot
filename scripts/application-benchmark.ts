@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import benchmarkCases from "@/scripts/fixtures/application-benchmark-cases.json";
 import { createDefaultAnswerBank, saveAnswerBank } from "@/lib/answerBank";
@@ -172,6 +173,15 @@ type StageResult = {
   inventory: BenchmarkFieldRecord[];
 };
 
+type BenchmarkCaseStatus = "completed" | "failed_runtime" | "manual_barrier" | "site_unavailable" | "not_scorable" | "timeout";
+
+type MetricSummary = {
+  numerator: number;
+  denominator: number;
+  rate: number;
+  notMeasured: boolean;
+};
+
 type BenchmarkCaseResult = {
   id: string;
   ats: AtsName;
@@ -179,7 +189,7 @@ type BenchmarkCaseResult = {
   company: string;
   roleTitle: string;
   url: string;
-  status: "completed" | "manual_barrier" | "site_unavailable" | "failed";
+  status: BenchmarkCaseStatus;
   metadata: {
     expectedCompany: string;
     expectedRoleTitle: string;
@@ -253,10 +263,13 @@ type BenchmarkSummary = {
   startedAt: string;
   finishedAt: string;
   selectedCaseIds: string[];
-  overall: Record<string, number>;
-  byAts: Record<string, Record<string, number>>;
+  overall: Record<string, unknown>;
+  byAts: Record<string, Record<string, unknown>>;
   byApplication: BenchmarkCaseResult[];
   failedCaseIds: string[];
+  failedRuntimeCaseIds: string[];
+  timeoutCaseIds: string[];
+  notScorableCaseIds: string[];
   unavailableCaseIds: string[];
   manualBarrierCaseIds: string[];
   severeIncorrectAnswers: number;
@@ -352,8 +365,21 @@ function roundRatio(numerator: number, denominator: number) {
   return Math.round((numerator / denominator) * 1000) / 1000;
 }
 
+function buildMetric(numerator: number, denominator: number): MetricSummary {
+  return {
+    numerator,
+    denominator,
+    rate: roundRatio(numerator, denominator),
+    notMeasured: denominator === 0
+  };
+}
+
 function formatRatioWithCounts(numerator: number, denominator: number) {
   return `${roundRatio(numerator, denominator).toFixed(3)} (${numerator}/${denominator})`;
+}
+
+function formatMetric(metric: MetricSummary) {
+  return metric.notMeasured ? `not measured (${metric.numerator}/${metric.denominator})` : `${metric.rate.toFixed(3)} (${metric.numerator}/${metric.denominator})`;
 }
 
 function cleanText(value: string | null | undefined) {
@@ -1397,6 +1423,11 @@ async function preparePageForBenchmark(
 ) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await waitForPageReadiness(page);
+    const dismissedConsent = await dismissCookieConsentIfPresent(page, { waitForAppearanceMs: 1_500 });
+    if (dismissedConsent) {
+      actionsTaken.push("Dismissed cookie or consent dialog before scanning the application page.");
+      await waitForPageReadiness(page);
+    }
 
     const unavailable = await detectSiteUnavailable(page);
     if (unavailable) {
@@ -1428,17 +1459,12 @@ async function preparePageForBenchmark(
       return { status: "manual_barrier" as const };
     }
 
-    const dismissedConsent = await dismissCookieConsentIfPresent(page, { waitForAppearanceMs: 2_500 });
-    if (dismissedConsent) {
-      actionsTaken.push("Dismissed cookie or consent dialog before entering the application.");
-    }
-
     actionsTaken.push(`Clicked entry action: ${entryAction.label}`);
     await clickVisibleAction(page, entryAction);
   }
 
   manualBarriers.push("ApplyPilot could not reach a visible application form after safe entry attempts.");
-  return { status: "failed" as const };
+  return { status: "failed_runtime" as const };
 }
 
 async function maybeAdvanceToNextPage(
@@ -1576,6 +1602,7 @@ function manualEffortFromInventory(records: BenchmarkFieldRecord[], retriesRequi
 
 async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
+  await rm(caseDir, { recursive: true, force: true }).catch(() => undefined);
   await mkdir(caseDir, { recursive: true });
 
   const screenshotPaths: string[] = [];
@@ -1599,6 +1626,18 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
   const tracePath = path.join(TRACE_DIR, `${testCase.id}.zip`);
   const fieldInventoryPath = path.join(FIELD_INVENTORY_DIR, `${testCase.id}.json`);
   const reportPath = path.join(caseDir, "report.json");
+  await Promise.all([
+    rm(tracePath, { force: true }).catch(() => undefined),
+    rm(fieldInventoryPath, { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-1-before.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-1-after.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-2-before.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-2-after.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-3-before.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-3-after.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-4-before.png`), { force: true }).catch(() => undefined),
+    rm(path.join(SCREENSHOT_DIR, `${testCase.id}-page-4-after.png`), { force: true }).catch(() => undefined)
+  ]);
   let finalStatus: BenchmarkCaseResult["status"] = "completed";
   let metadata = {
     company: testCase.company,
@@ -1714,6 +1753,9 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
       }
 
       const metrics = metricsFromInventory(allFieldRecords);
+      if (finalStatus === "completed" && metrics.answerableCount === 0) {
+        finalStatus = "not_scorable";
+      }
       const metadataSuccess = metadataMatches(testCase.company, metadata.company) && metadataMatches(testCase.roleTitle, metadata.roleTitle);
       if (!metadataSuccess) {
         warnings.push("Metadata extraction did not fully match the expected company and role.");
@@ -1810,7 +1852,7 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
       return result;
     }
   } catch (error) {
-    finalStatus = "failed";
+    finalStatus = "failed_runtime";
     manualBarriers.push(error instanceof Error ? error.message : String(error));
   } finally {
     await context.tracing.stop({ path: tracePath }).catch(() => undefined);
@@ -1925,6 +1967,15 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures) {
   return fallbackResult;
 }
 
+async function readPersistedCaseReport(reportPath: string) {
+  try {
+    const raw = await readFile(reportPath, "utf8");
+    return JSON.parse(raw) as BenchmarkCaseResult;
+  } catch {
+    return null;
+  }
+}
+
 function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string): BenchmarkCaseResult {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   const tracePath = path.join(TRACE_DIR, `${testCase.id}.zip`);
@@ -1938,7 +1989,7 @@ function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string): Benchma
     company: testCase.company,
     roleTitle: testCase.roleTitle,
     url: testCase.url,
-    status: "failed",
+    status: "timeout",
     metadata: {
       expectedCompany: testCase.company,
       expectedRoleTitle: testCase.roleTitle,
@@ -2039,9 +2090,13 @@ function mergeTimedOutCaseResult(
     return timedOutCaseResult(testCase, startedAt);
   }
 
+  if (partial.status === "completed" || partial.status === "manual_barrier" || partial.status === "site_unavailable" || partial.status === "not_scorable") {
+    return partial;
+  }
+
   return {
     ...partial,
-    status: "failed",
+    status: "timeout",
     manualBarriers: Array.from(new Set([`Case timed out after the configured limit. Started ${startedAt}.`, ...partial.manualBarriers])),
     warnings: Array.from(new Set(["Timed out before the benchmark case completed.", ...partial.warnings])),
     submitted: false
@@ -2075,9 +2130,8 @@ async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFi
   });
 
   const timeoutPromise = new Promise<BenchmarkCaseResult>((resolve) => {
-    timeoutHandle = setTimeout(async () => {
+    timeoutHandle = setTimeout(() => {
       timedOut = true;
-      await resetBrowserManagerForTests().catch(() => undefined);
       resolve(timedOutCaseResult(testCase, startedAt));
     }, caseTimeoutMs);
   });
@@ -2087,12 +2141,23 @@ async function runCaseWithTimeout(testCase: BenchmarkCase, fixtures: SyntheticFi
     return winner;
   }
 
-  await Promise.race([
-    casePromise.catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, 15_000))
+  const graceSettled = await Promise.race([
+    casePromise.then((result) => ({ settled: true as const, result })).catch(() => ({ settled: true as const, result: null })),
+    new Promise<{ settled: false }>((resolve) => setTimeout(() => resolve({ settled: false }), 15_000))
   ]);
 
-  const timedOutResult = mergeTimedOutCaseResult(testCase, startedAt, settledResult);
+  if (graceSettled.settled && graceSettled.result) {
+    return graceSettled.result;
+  }
+
+  const persistedResult = await readPersistedCaseReport(timedOutCaseResult(testCase, startedAt).reportPath);
+  if (persistedResult && persistedResult.status !== "timeout") {
+    return persistedResult;
+  }
+
+  await resetBrowserManagerForTests().catch(() => undefined);
+
+  const timedOutResult = mergeTimedOutCaseResult(testCase, startedAt, persistedResult ?? settledResult);
   await writeFile(timedOutResult.fieldInventoryPath, JSON.stringify(timedOutResult.stageResults, null, 2), "utf8").catch(() => undefined);
   await writeFile(timedOutResult.reportPath, JSON.stringify(timedOutResult, null, 2), "utf8").catch(() => undefined);
   return timedOutResult;
@@ -2106,62 +2171,68 @@ function summarizeByAts(results: BenchmarkCaseResult[]) {
     grouped.set(result.ats, list);
   }
 
-  const summary: Record<string, Record<string, number>> = {};
+  const summary: Record<string, Record<string, unknown>> = {};
   for (const [ats, atsResults] of grouped.entries()) {
     const scorableResults = atsResults.filter((result) => result.status !== "site_unavailable");
     const metadataAvailable = scorableResults.filter((result) => result.metadata.source !== "none");
+    const detectedCount = atsResults.reduce((sum, item) => sum + item.detectedCount, 0);
+    const answerableCount = atsResults.reduce((sum, item) => sum + item.answerableFieldCount, 0);
+    const verifiedCount = atsResults.reduce((sum, item) => sum + item.verifiedCount, 0);
+    const attemptedCount = atsResults.reduce((sum, item) => sum + item.attemptedCount, 0);
+    const safeVerifiedCount = atsResults.reduce((sum, item) => sum + item.safeVerifiedCount, 0);
+    const safeAnswerableCount = atsResults.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0);
+    const userExpectedVerifiedCount = atsResults.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0);
+    const userExpectedCount = atsResults.reduce((sum, item) => sum + item.userExpectedFieldCount, 0);
+    const dropdownVerifiedCount = atsResults.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0);
+    const dropdownCount = atsResults.reduce((sum, item) => sum + item.dropdownCount, 0);
+    const autocompleteVerifiedCount = atsResults.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0);
+    const autocompleteCount = atsResults.reduce((sum, item) => sum + item.autocompleteCount, 0);
+    const fileUploadVerifiedCount = atsResults.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0);
+    const fileUploadCount = atsResults.reduce((sum, item) => sum + item.fileUploadCount, 0);
+    const metadataMetric = buildMetric(metadataAvailable.filter((result) => result.metadata.success).length, metadataAvailable.length);
+
     summary[ats] = {
       cases: atsResults.length,
+      completed: atsResults.filter((result) => result.status === "completed").length,
+      manualBarrier: atsResults.filter((result) => result.status === "manual_barrier").length,
+      siteUnavailable: atsResults.filter((result) => result.status === "site_unavailable").length,
+      failedRuntime: atsResults.filter((result) => result.status === "failed_runtime").length,
+      notScorable: atsResults.filter((result) => result.status === "not_scorable").length,
+      timeout: atsResults.filter((result) => result.status === "timeout").length,
       rawDomCandidateCount: atsResults.reduce((sum, item) => sum + item.rawDomCandidateCount, 0),
       noiseRejectedCount: atsResults.reduce((sum, item) => sum + item.noiseRejectedCount, 0),
       logicalFieldCount: atsResults.reduce((sum, item) => sum + item.logicalFieldCount, 0),
       answerableFieldCount: atsResults.reduce((sum, item) => sum + item.answerableFieldCount, 0),
       intentionallyUnresolvedCount: atsResults.reduce((sum, item) => sum + item.intentionallyUnresolvedCount, 0),
-      detectedCount: atsResults.reduce((sum, item) => sum + item.detectedCount, 0),
-      attemptedCount: atsResults.reduce((sum, item) => sum + item.attemptedCount, 0),
-      verifiedCount: atsResults.reduce((sum, item) => sum + item.verifiedCount, 0),
-      safeAnswerableFieldCount: atsResults.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0),
-      safeVerifiedCount: atsResults.reduce((sum, item) => sum + item.safeVerifiedCount, 0),
-      userExpectedFieldCount: atsResults.reduce((sum, item) => sum + item.userExpectedFieldCount, 0),
-      userExpectedVerifiedCount: atsResults.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0),
-      dropdownCount: atsResults.reduce((sum, item) => sum + item.dropdownCount, 0),
-      dropdownVerifiedCount: atsResults.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0),
-      autocompleteCount: atsResults.reduce((sum, item) => sum + item.autocompleteCount, 0),
-      autocompleteVerifiedCount: atsResults.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0),
-      fileUploadCount: atsResults.reduce((sum, item) => sum + item.fileUploadCount, 0),
-      fileUploadVerifiedCount: atsResults.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0),
-      fieldDetectionRecall: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.detectedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.answerableFieldCount, 0)
-      ),
-      fillCoverage: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.verifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.answerableFieldCount, 0)
-      ),
-      fillPrecision: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.verifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.attemptedCount, 0)
-      ),
-      dropdownSuccess: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.dropdownCount, 0)
-      ),
-      safeAnswerCoverage: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.safeVerifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0)
-      ),
-      userExpectedCoverage: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.userExpectedFieldCount, 0)
-      ),
-      autocompleteSuccess: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.autocompleteCount, 0)
-      ),
-      fileUploadSuccess: roundRatio(
-        atsResults.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0),
-        atsResults.reduce((sum, item) => sum + item.fileUploadCount, 0)
-      ),
+      detectedCount,
+      attemptedCount,
+      verifiedCount,
+      safeAnswerableFieldCount: safeAnswerableCount,
+      safeVerifiedCount,
+      userExpectedFieldCount: userExpectedCount,
+      userExpectedVerifiedCount,
+      dropdownCount,
+      dropdownVerifiedCount,
+      autocompleteCount,
+      autocompleteVerifiedCount,
+      fileUploadCount,
+      fileUploadVerifiedCount,
+      fieldDetectionRecall: buildMetric(detectedCount, answerableCount).rate,
+      fieldDetectionRecallMetric: buildMetric(detectedCount, answerableCount),
+      fillCoverage: buildMetric(verifiedCount, answerableCount).rate,
+      fillCoverageMetric: buildMetric(verifiedCount, answerableCount),
+      fillPrecision: buildMetric(verifiedCount, attemptedCount).rate,
+      fillPrecisionMetric: buildMetric(verifiedCount, attemptedCount),
+      dropdownSuccess: buildMetric(dropdownVerifiedCount, dropdownCount).rate,
+      dropdownSuccessMetric: buildMetric(dropdownVerifiedCount, dropdownCount),
+      safeAnswerCoverage: buildMetric(safeVerifiedCount, safeAnswerableCount).rate,
+      safeAnswerCoverageMetric: buildMetric(safeVerifiedCount, safeAnswerableCount),
+      userExpectedCoverage: buildMetric(userExpectedVerifiedCount, userExpectedCount).rate,
+      userExpectedCoverageMetric: buildMetric(userExpectedVerifiedCount, userExpectedCount),
+      autocompleteSuccess: buildMetric(autocompleteVerifiedCount, autocompleteCount).rate,
+      autocompleteSuccessMetric: buildMetric(autocompleteVerifiedCount, autocompleteCount),
+      fileUploadSuccess: buildMetric(fileUploadVerifiedCount, fileUploadCount).rate,
+      fileUploadSuccessMetric: buildMetric(fileUploadVerifiedCount, fileUploadCount),
       severeIncorrectAnswers: atsResults.reduce((sum, item) => sum + item.severeIncorrectAnswers, 0),
       severeFieldFailures: atsResults.reduce((sum, item) => sum + item.severeFieldFailures, 0),
       generatableQuestionCount: atsResults.reduce((sum, item) => sum + item.generatableQuestionCount, 0),
@@ -2192,7 +2263,8 @@ function summarizeByAts(results: BenchmarkCaseResult[]) {
       missingEvidenceQuestions: atsResults.reduce((sum, item) => sum + item.missingEvidenceQuestions, 0),
       generatedAnswersRequiringCorrection: atsResults.reduce((sum, item) => sum + item.generatedAnswersRequiringCorrection, 0),
       generatedAnswersAcceptedWithoutEdit: atsResults.reduce((sum, item) => sum + item.generatedAnswersAcceptedWithoutEdit, 0),
-      metadataSuccess: roundRatio(metadataAvailable.filter((result) => result.metadata.success).length, metadataAvailable.length)
+      metadataSuccess: metadataMetric.rate,
+      metadataSuccessMetric: metadataMetric
     };
   }
 
@@ -2202,70 +2274,73 @@ function summarizeByAts(results: BenchmarkCaseResult[]) {
 function buildOverallSummary(results: BenchmarkCaseResult[]) {
   const scorableResults = results.filter((result) => result.status !== "site_unavailable");
   const metadataAvailable = scorableResults.filter((result) => result.metadata.source !== "none");
-  const baseline = scorableResults.length || results.length || 1;
   const transitionAttempts = scorableResults.reduce((sum, item) => sum + item.transitionsAttempted, 0);
   const transitionContinued = scorableResults.reduce((sum, item) => sum + item.transitionsContinued, 0);
+  const detectedCount = results.reduce((sum, item) => sum + item.detectedCount, 0);
+  const answerableCount = results.reduce((sum, item) => sum + item.answerableFieldCount, 0);
+  const verifiedCount = results.reduce((sum, item) => sum + item.verifiedCount, 0);
+  const attemptedCount = results.reduce((sum, item) => sum + item.attemptedCount, 0);
+  const safeVerifiedCount = results.reduce((sum, item) => sum + item.safeVerifiedCount, 0);
+  const safeAnswerableCount = results.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0);
+  const userExpectedVerifiedCount = results.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0);
+  const userExpectedCount = results.reduce((sum, item) => sum + item.userExpectedFieldCount, 0);
+  const dropdownVerifiedCount = results.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0);
+  const dropdownCount = results.reduce((sum, item) => sum + item.dropdownCount, 0);
+  const autocompleteVerifiedCount = results.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0);
+  const autocompleteCount = results.reduce((sum, item) => sum + item.autocompleteCount, 0);
+  const fileUploadVerifiedCount = results.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0);
+  const fileUploadCount = results.reduce((sum, item) => sum + item.fileUploadCount, 0);
+  const metadataMetric = buildMetric(metadataAvailable.filter((result) => result.metadata.success).length, metadataAvailable.length);
+  const transitionMetric = buildMetric(transitionContinued, transitionAttempts);
 
   return {
     cases: results.length,
     completed: results.filter((result) => result.status === "completed").length,
     manualBarrier: results.filter((result) => result.status === "manual_barrier").length,
     siteUnavailable: results.filter((result) => result.status === "site_unavailable").length,
-    failed: results.filter((result) => result.status === "failed").length,
+    failedRuntime: results.filter((result) => result.status === "failed_runtime").length,
+    notScorable: results.filter((result) => result.status === "not_scorable").length,
+    timeout: results.filter((result) => result.status === "timeout").length,
     rawDomCandidateCount: results.reduce((sum, item) => sum + item.rawDomCandidateCount, 0),
     noiseRejectedCount: results.reduce((sum, item) => sum + item.noiseRejectedCount, 0),
     logicalFieldCount: results.reduce((sum, item) => sum + item.logicalFieldCount, 0),
     answerableFieldCount: results.reduce((sum, item) => sum + item.answerableFieldCount, 0),
     intentionallyUnresolvedCount: results.reduce((sum, item) => sum + item.intentionallyUnresolvedCount, 0),
-    detectedCount: results.reduce((sum, item) => sum + item.detectedCount, 0),
-    attemptedCount: results.reduce((sum, item) => sum + item.attemptedCount, 0),
-    verifiedCount: results.reduce((sum, item) => sum + item.verifiedCount, 0),
+    detectedCount,
+    attemptedCount,
+    verifiedCount,
     safeAnswerableFieldCount: results.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0),
-    safeVerifiedCount: results.reduce((sum, item) => sum + item.safeVerifiedCount, 0),
-    userExpectedFieldCount: results.reduce((sum, item) => sum + item.userExpectedFieldCount, 0),
-    userExpectedVerifiedCount: results.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0),
-    dropdownCount: results.reduce((sum, item) => sum + item.dropdownCount, 0),
-    dropdownVerifiedCount: results.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0),
-    autocompleteCount: results.reduce((sum, item) => sum + item.autocompleteCount, 0),
-    autocompleteVerifiedCount: results.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0),
-    fileUploadCount: results.reduce((sum, item) => sum + item.fileUploadCount, 0),
-    fileUploadVerifiedCount: results.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0),
-    fieldDetectionRecall: roundRatio(
-      results.reduce((sum, item) => sum + item.detectedCount, 0),
-      results.reduce((sum, item) => sum + item.answerableFieldCount, 0)
-    ),
-    fillCoverage: roundRatio(
-      results.reduce((sum, item) => sum + item.verifiedCount, 0),
-      results.reduce((sum, item) => sum + item.answerableFieldCount, 0)
-    ),
-    fillPrecision: roundRatio(
-      results.reduce((sum, item) => sum + item.verifiedCount, 0),
-      results.reduce((sum, item) => sum + item.attemptedCount, 0)
-    ),
-    dropdownSuccess: roundRatio(
-      results.reduce((sum, item) => sum + item.dropdownVerifiedCount, 0),
-      results.reduce((sum, item) => sum + item.dropdownCount, 0)
-    ),
-    safeAnswerCoverage: roundRatio(
-      results.reduce((sum, item) => sum + item.safeVerifiedCount, 0),
-      results.reduce((sum, item) => sum + item.safeAnswerableFieldCount, 0)
-    ),
-    userExpectedCoverage: roundRatio(
-      results.reduce((sum, item) => sum + item.userExpectedVerifiedCount, 0),
-      results.reduce((sum, item) => sum + item.userExpectedFieldCount, 0)
-    ),
-    autocompleteSuccess: roundRatio(
-      results.reduce((sum, item) => sum + item.autocompleteVerifiedCount, 0),
-      results.reduce((sum, item) => sum + item.autocompleteCount, 0)
-    ),
-    fileUploadSuccess: roundRatio(
-      results.reduce((sum, item) => sum + item.fileUploadVerifiedCount, 0),
-      results.reduce((sum, item) => sum + item.fileUploadCount, 0)
-    ),
-    metadataSuccess: roundRatio(metadataAvailable.filter((result) => result.metadata.success).length, metadataAvailable.length),
+    safeVerifiedCount,
+    userExpectedFieldCount: userExpectedCount,
+    userExpectedVerifiedCount,
+    dropdownCount,
+    dropdownVerifiedCount,
+    autocompleteCount,
+    autocompleteVerifiedCount,
+    fileUploadCount,
+    fileUploadVerifiedCount,
+    fieldDetectionRecall: buildMetric(detectedCount, answerableCount).rate,
+    fieldDetectionRecallMetric: buildMetric(detectedCount, answerableCount),
+    fillCoverage: buildMetric(verifiedCount, answerableCount).rate,
+    fillCoverageMetric: buildMetric(verifiedCount, answerableCount),
+    fillPrecision: buildMetric(verifiedCount, attemptedCount).rate,
+    fillPrecisionMetric: buildMetric(verifiedCount, attemptedCount),
+    dropdownSuccess: buildMetric(dropdownVerifiedCount, dropdownCount).rate,
+    dropdownSuccessMetric: buildMetric(dropdownVerifiedCount, dropdownCount),
+    safeAnswerCoverage: buildMetric(safeVerifiedCount, safeAnswerableCount).rate,
+    safeAnswerCoverageMetric: buildMetric(safeVerifiedCount, safeAnswerableCount),
+    userExpectedCoverage: buildMetric(userExpectedVerifiedCount, userExpectedCount).rate,
+    userExpectedCoverageMetric: buildMetric(userExpectedVerifiedCount, userExpectedCount),
+    autocompleteSuccess: buildMetric(autocompleteVerifiedCount, autocompleteCount).rate,
+    autocompleteSuccessMetric: buildMetric(autocompleteVerifiedCount, autocompleteCount),
+    fileUploadSuccess: buildMetric(fileUploadVerifiedCount, fileUploadCount).rate,
+    fileUploadSuccessMetric: buildMetric(fileUploadVerifiedCount, fileUploadCount),
+    metadataSuccess: metadataMetric.rate,
+    metadataSuccessMetric: metadataMetric,
     transitionAttempts,
     transitionContinued,
-    multiPageContinuity: transitionAttempts ? roundRatio(transitionContinued, transitionAttempts) : 1,
+    multiPageContinuity: transitionMetric.rate,
+    multiPageContinuityMetric: transitionMetric,
     severeIncorrectAnswers: results.reduce((sum, item) => sum + item.severeIncorrectAnswers, 0),
     severeFieldFailures: results.reduce((sum, item) => sum + item.severeFieldFailures, 0),
     generatableQuestionCount: results.reduce((sum, item) => sum + item.generatableQuestionCount, 0),
@@ -2276,19 +2351,35 @@ function buildOverallSummary(results: BenchmarkCaseResult[]) {
     generatedAnswersPassingQuality: results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
     generatedAnswersRejectedForQuality: results.reduce((sum, item) => sum + item.generatedAnswersRejectedForQuality, 0),
     generatableShortAnswersFilled: results.reduce((sum, item) => sum + item.generatableShortAnswersFilled, 0),
-    rawShortAnswerCoverage: roundRatio(
+    rawShortAnswerCoverage: buildMetric(
+      results.reduce((sum, item) => sum + item.generatedAnswersInserted, 0),
+      results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
+    ).rate,
+    rawShortAnswerCoverageMetric: buildMetric(
       results.reduce((sum, item) => sum + item.generatedAnswersInserted, 0),
       results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
     ),
-    qualityApprovedShortAnswerCoverage: roundRatio(
+    qualityApprovedShortAnswerCoverage: buildMetric(
+      results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
+      results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
+    ).rate,
+    qualityApprovedShortAnswerCoverageMetric: buildMetric(
       results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
       results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
     ),
-    humanReadyShortAnswerCoverage: roundRatio(
+    humanReadyShortAnswerCoverage: buildMetric(
+      results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
+      results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
+    ).rate,
+    humanReadyShortAnswerCoverageMetric: buildMetric(
       results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
       results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
     ),
-    generatableShortAnswerCoverage: roundRatio(
+    generatableShortAnswerCoverage: buildMetric(
+      results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
+      results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
+    ).rate,
+    generatableShortAnswerCoverageMetric: buildMetric(
       results.reduce((sum, item) => sum + item.generatedAnswersPassingQuality, 0),
       results.reduce((sum, item) => sum + item.generatableQuestionCount, 0)
     ),
@@ -2301,82 +2392,94 @@ function buildOverallSummary(results: BenchmarkCaseResult[]) {
 }
 
 function buildMarkdownReport(summary: BenchmarkSummary) {
+  const overall = summary.overall as Record<string, unknown>;
   const lines = [
     "# Application benchmark",
     "",
     `- Started: ${summary.startedAt}`,
     `- Finished: ${summary.finishedAt}`,
-    `- Cases run: ${summary.overall.cases}`,
-    `- Completed: ${summary.overall.completed}`,
-    `- Manual barriers: ${summary.overall.manualBarrier}`,
-    `- Site unavailable: ${summary.overall.siteUnavailable}`,
-    `- Failed: ${summary.overall.failed}`,
-    `- Raw DOM candidates: ${summary.overall.rawDomCandidateCount}`,
-    `- Noise rejected: ${summary.overall.noiseRejectedCount}`,
-    `- Logical fields: ${summary.overall.logicalFieldCount}`,
-    `- Answerable fields: ${summary.overall.answerableFieldCount}`,
-    `- Intentionally unresolved: ${summary.overall.intentionallyUnresolvedCount}`,
-    `- Field detection recall: ${formatRatioWithCounts(summary.overall.detectedCount, summary.overall.answerableFieldCount)}`,
-    `- Fill coverage: ${formatRatioWithCounts(summary.overall.verifiedCount, summary.overall.answerableFieldCount)}`,
-    `- Fill precision: ${formatRatioWithCounts(summary.overall.verifiedCount, summary.overall.attemptedCount)}`,
-    `- Safe-answer coverage: ${formatRatioWithCounts(summary.overall.safeVerifiedCount, summary.overall.safeAnswerableFieldCount)}`,
-    `- User-expected coverage: ${formatRatioWithCounts(summary.overall.userExpectedVerifiedCount, summary.overall.userExpectedFieldCount)}`,
-    `- Dropdown success: ${formatRatioWithCounts(summary.overall.dropdownVerifiedCount, summary.overall.dropdownCount)}`,
-    `- Autocomplete success: ${formatRatioWithCounts(summary.overall.autocompleteVerifiedCount, summary.overall.autocompleteCount)}`,
-    `- File upload success: ${formatRatioWithCounts(summary.overall.fileUploadVerifiedCount, summary.overall.fileUploadCount)}`,
-    `- Generatable questions: ${summary.overall.generatableQuestionCount}`,
-    `- Generatable short answers detected: ${summary.overall.generatableShortAnswersDetected}`,
-    `- Generated answers: ${summary.overall.generatedAnswerCount}`,
-    `- Inserted answers: ${summary.overall.generatedAnswersInserted}`,
-    `- Browser-verified generated answers: ${summary.overall.generatedAnswersBrowserVerified}`,
-    `- Quality-approved generated answers: ${summary.overall.generatedAnswersPassingQuality}`,
-    `- Quality-rejected generated answers: ${summary.overall.generatedAnswersRejectedForQuality}`,
-    `- Raw short-answer coverage: ${formatRatioWithCounts(summary.overall.generatedAnswersInserted, summary.overall.generatableQuestionCount)}`,
-    `- Quality-approved short-answer coverage: ${formatRatioWithCounts(summary.overall.generatedAnswersPassingQuality, summary.overall.generatableQuestionCount)}`,
-    `- Human-ready short-answer coverage: ${formatRatioWithCounts(summary.overall.generatedAnswersAcceptedWithoutEdit, summary.overall.generatableQuestionCount)}`,
-    `- Reusable answers filled: ${summary.overall.reusableAnswersFilled}`,
-    `- Missing evidence questions: ${summary.overall.missingEvidenceQuestions}`,
-    `- Generated answers requiring correction: ${summary.overall.generatedAnswersRequiringCorrection}`,
-    `- Generated answers accepted without edit: ${summary.overall.generatedAnswersAcceptedWithoutEdit}`,
-    `- Metadata success: ${summary.overall.metadataSuccess}`,
-    `- Multi-page continuity: ${summary.overall.multiPageContinuity}`,
+    `- Cases run: ${overall.cases}`,
+    `- Completed: ${overall.completed}`,
+    `- Manual barriers: ${overall.manualBarrier}`,
+    `- Site unavailable: ${overall.siteUnavailable}`,
+    `- Failed runtime: ${overall.failedRuntime}`,
+    `- Not scorable: ${overall.notScorable}`,
+    `- Timeout: ${overall.timeout}`,
+    `- Raw DOM candidates: ${overall.rawDomCandidateCount}`,
+    `- Noise rejected: ${overall.noiseRejectedCount}`,
+    `- Logical fields: ${overall.logicalFieldCount}`,
+    `- Answerable fields: ${overall.answerableFieldCount}`,
+    `- Intentionally unresolved: ${overall.intentionallyUnresolvedCount}`,
+    `- Field detection recall: ${formatMetric(overall.fieldDetectionRecallMetric as MetricSummary)}`,
+    `- Fill coverage: ${formatMetric(overall.fillCoverageMetric as MetricSummary)}`,
+    `- Fill precision: ${formatMetric(overall.fillPrecisionMetric as MetricSummary)}`,
+    `- Safe-answer coverage: ${formatMetric(overall.safeAnswerCoverageMetric as MetricSummary)}`,
+    `- User-expected coverage: ${formatMetric(overall.userExpectedCoverageMetric as MetricSummary)}`,
+    `- Dropdown success: ${formatMetric(overall.dropdownSuccessMetric as MetricSummary)}`,
+    `- Autocomplete success: ${formatMetric(overall.autocompleteSuccessMetric as MetricSummary)}`,
+    `- File upload success: ${formatMetric(overall.fileUploadSuccessMetric as MetricSummary)}`,
+    `- Generatable questions: ${overall.generatableQuestionCount}`,
+    `- Generatable short answers detected: ${overall.generatableShortAnswersDetected}`,
+    `- Generated answers: ${overall.generatedAnswerCount}`,
+    `- Inserted answers: ${overall.generatedAnswersInserted}`,
+    `- Browser-verified generated answers: ${overall.generatedAnswersBrowserVerified}`,
+    `- Quality-approved generated answers: ${overall.generatedAnswersPassingQuality}`,
+    `- Quality-rejected generated answers: ${overall.generatedAnswersRejectedForQuality}`,
+    `- Raw short-answer coverage: ${formatMetric(overall.rawShortAnswerCoverageMetric as MetricSummary)}`,
+    `- Quality-approved short-answer coverage: ${formatMetric(overall.qualityApprovedShortAnswerCoverageMetric as MetricSummary)}`,
+    `- Human-ready short-answer coverage: ${formatMetric(overall.humanReadyShortAnswerCoverageMetric as MetricSummary)}`,
+    `- Reusable answers filled: ${overall.reusableAnswersFilled}`,
+    `- Missing evidence questions: ${overall.missingEvidenceQuestions}`,
+    `- Generated answers requiring correction: ${overall.generatedAnswersRequiringCorrection}`,
+    `- Generated answers accepted without edit: ${overall.generatedAnswersAcceptedWithoutEdit}`,
+    `- Metadata success: ${formatMetric(overall.metadataSuccessMetric as MetricSummary)}`,
+    `- Multi-page continuity: ${formatMetric(overall.multiPageContinuityMetric as MetricSummary)}`,
     `- Severe incorrect answers: ${summary.severeIncorrectAnswers}`,
     `- Severe field failures: ${summary.severeFieldFailures}`,
     `- No application submitted: ${summary.noFinalSubmissions ? "yes" : "no"}`,
     "",
     "## ATS metrics",
     "",
-    ...Object.entries(summary.byAts).flatMap(([ats, metrics]) => [
-      `### ${ats}`,
-      "",
-      `- Cases: ${metrics.cases}`,
-      `- Raw DOM candidates: ${metrics.rawDomCandidateCount}`,
-      `- Noise rejected: ${metrics.noiseRejectedCount}`,
-      `- Logical fields: ${metrics.logicalFieldCount}`,
-      `- Answerable fields: ${metrics.answerableFieldCount}`,
-      `- Field detection recall: ${formatRatioWithCounts(metrics.detectedCount, metrics.answerableFieldCount)}`,
-      `- Fill coverage: ${formatRatioWithCounts(metrics.verifiedCount, metrics.answerableFieldCount)}`,
-      `- Fill precision: ${formatRatioWithCounts(metrics.verifiedCount, metrics.attemptedCount)}`,
-      `- Safe-answer coverage: ${formatRatioWithCounts(metrics.safeVerifiedCount, metrics.safeAnswerableFieldCount)}`,
-      `- User-expected coverage: ${formatRatioWithCounts(metrics.userExpectedVerifiedCount, metrics.userExpectedFieldCount)}`,
-      `- Dropdown success: ${formatRatioWithCounts(metrics.dropdownVerifiedCount, metrics.dropdownCount)}`,
-      `- Autocomplete success: ${formatRatioWithCounts(metrics.autocompleteVerifiedCount, metrics.autocompleteCount)}`,
-      `- File upload success: ${formatRatioWithCounts(metrics.fileUploadVerifiedCount, metrics.fileUploadCount)}`,
-      `- Generatable questions: ${metrics.generatableQuestionCount}`,
-      `- Generated answers: ${metrics.generatedAnswerCount}`,
-      `- Inserted answers: ${metrics.generatedAnswersInserted}`,
-      `- Browser-verified generated answers: ${metrics.generatedAnswersBrowserVerified}`,
-      `- Quality-approved generated answers: ${metrics.generatedAnswersPassingQuality}`,
-      `- Quality-rejected generated answers: ${metrics.generatedAnswersRejectedForQuality}`,
-      `- Raw short-answer coverage: ${formatRatioWithCounts(metrics.generatedAnswersInserted, metrics.generatableQuestionCount)}`,
-      `- Quality-approved short-answer coverage: ${formatRatioWithCounts(metrics.generatedAnswersPassingQuality, metrics.generatableQuestionCount)}`,
-      `- Human-ready short-answer coverage: ${formatRatioWithCounts(metrics.generatedAnswersAcceptedWithoutEdit, metrics.generatableQuestionCount)}`,
-      `- Reusable answers filled: ${metrics.reusableAnswersFilled}`,
-      `- Missing evidence questions: ${metrics.missingEvidenceQuestions}`,
-      `- Severe incorrect answers: ${metrics.severeIncorrectAnswers}`,
-      `- Severe field failures: ${metrics.severeFieldFailures}`,
-      ""
-    ]),
+    ...Object.entries(summary.byAts).flatMap(([ats, metrics]) => {
+      const atsMetrics = metrics as Record<string, unknown>;
+      return [
+        `### ${ats}`,
+        "",
+        `- Cases: ${atsMetrics.cases}`,
+        `- Completed: ${atsMetrics.completed}`,
+        `- Manual barriers: ${atsMetrics.manualBarrier}`,
+        `- Site unavailable: ${atsMetrics.siteUnavailable}`,
+        `- Failed runtime: ${atsMetrics.failedRuntime}`,
+        `- Not scorable: ${atsMetrics.notScorable}`,
+        `- Timeout: ${atsMetrics.timeout}`,
+        `- Raw DOM candidates: ${atsMetrics.rawDomCandidateCount}`,
+        `- Noise rejected: ${atsMetrics.noiseRejectedCount}`,
+        `- Logical fields: ${atsMetrics.logicalFieldCount}`,
+        `- Answerable fields: ${atsMetrics.answerableFieldCount}`,
+        `- Field detection recall: ${formatMetric(atsMetrics.fieldDetectionRecallMetric as MetricSummary)}`,
+        `- Fill coverage: ${formatMetric(atsMetrics.fillCoverageMetric as MetricSummary)}`,
+        `- Fill precision: ${formatMetric(atsMetrics.fillPrecisionMetric as MetricSummary)}`,
+        `- Safe-answer coverage: ${formatMetric(atsMetrics.safeAnswerCoverageMetric as MetricSummary)}`,
+        `- User-expected coverage: ${formatMetric(atsMetrics.userExpectedCoverageMetric as MetricSummary)}`,
+        `- Dropdown success: ${formatMetric(atsMetrics.dropdownSuccessMetric as MetricSummary)}`,
+        `- Autocomplete success: ${formatMetric(atsMetrics.autocompleteSuccessMetric as MetricSummary)}`,
+        `- File upload success: ${formatMetric(atsMetrics.fileUploadSuccessMetric as MetricSummary)}`,
+        `- Generatable questions: ${atsMetrics.generatableQuestionCount}`,
+        `- Generated answers: ${atsMetrics.generatedAnswerCount}`,
+        `- Inserted answers: ${atsMetrics.generatedAnswersInserted}`,
+        `- Browser-verified generated answers: ${atsMetrics.generatedAnswersBrowserVerified}`,
+        `- Quality-approved generated answers: ${atsMetrics.generatedAnswersPassingQuality}`,
+        `- Quality-rejected generated answers: ${atsMetrics.generatedAnswersRejectedForQuality}`,
+        `- Raw short-answer coverage: ${formatRatioWithCounts(atsMetrics.generatedAnswersInserted as number, atsMetrics.generatableQuestionCount as number)}`,
+        `- Quality-approved short-answer coverage: ${formatRatioWithCounts(atsMetrics.generatedAnswersPassingQuality as number, atsMetrics.generatableQuestionCount as number)}`,
+        `- Human-ready short-answer coverage: ${formatRatioWithCounts(atsMetrics.generatedAnswersAcceptedWithoutEdit as number, atsMetrics.generatableQuestionCount as number)}`,
+        `- Reusable answers filled: ${atsMetrics.reusableAnswersFilled}`,
+        `- Missing evidence questions: ${atsMetrics.missingEvidenceQuestions}`,
+        `- Severe incorrect answers: ${atsMetrics.severeIncorrectAnswers}`,
+        `- Severe field failures: ${atsMetrics.severeFieldFailures}`,
+        ""
+      ];
+    }),
     "## Applications",
     "",
     ...summary.byApplication.flatMap((result) => [
@@ -2536,12 +2639,13 @@ function buildNonAnswerableFieldAudit(results: BenchmarkCaseResult[]) {
 }
 
 function buildCoverageAudit(summary: BenchmarkSummary, results: BenchmarkCaseResult[]) {
+  const overall = summary.overall as Record<string, number>;
   const lines = [
     "# Coverage audit",
     "",
-    `- Safe-answer coverage: ${formatRatioWithCounts(summary.overall.safeVerifiedCount, summary.overall.safeAnswerableFieldCount)}`,
-    `- User-expected coverage: ${formatRatioWithCounts(summary.overall.userExpectedVerifiedCount, summary.overall.userExpectedFieldCount)}`,
-    `- Original benchmark fill coverage: ${formatRatioWithCounts(summary.overall.verifiedCount, summary.overall.answerableFieldCount)}`,
+    `- Safe-answer coverage: ${formatRatioWithCounts(overall.safeVerifiedCount, overall.safeAnswerableFieldCount)}`,
+    `- User-expected coverage: ${formatRatioWithCounts(overall.userExpectedVerifiedCount, overall.userExpectedFieldCount)}`,
+    `- Original benchmark fill coverage: ${formatRatioWithCounts(overall.verifiedCount, overall.answerableFieldCount)}`,
     ""
   ];
 
@@ -2688,7 +2792,10 @@ async function main() {
       overall: buildOverallSummary(results),
       byAts: summarizeByAts(results),
       byApplication: results,
-      failedCaseIds: results.filter((result) => result.status === "failed").map((result) => result.id),
+      failedCaseIds: results.filter((result) => result.status === "failed_runtime" || result.status === "timeout").map((result) => result.id),
+      failedRuntimeCaseIds: results.filter((result) => result.status === "failed_runtime").map((result) => result.id),
+      timeoutCaseIds: results.filter((result) => result.status === "timeout").map((result) => result.id),
+      notScorableCaseIds: results.filter((result) => result.status === "not_scorable").map((result) => result.id),
       unavailableCaseIds: results.filter((result) => result.status === "site_unavailable").map((result) => result.id),
       manualBarrierCaseIds: results.filter((result) => result.status === "manual_barrier").map((result) => result.id),
       severeIncorrectAnswers: results.reduce((sum, result) => sum + result.severeIncorrectAnswers, 0),
@@ -2711,11 +2818,17 @@ async function main() {
   }
 }
 
-main()
-  .then(() => {
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+const isDirectRun = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+
+if (isDirectRun) {
+  main()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+}
+
+export { buildMetric, buildOverallSummary, mergeTimedOutCaseResult };

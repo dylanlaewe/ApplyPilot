@@ -8,6 +8,7 @@ import { focusSessionPage, getOrCreateBrowserContext, getOrCreateSessionPage, ge
 import { fillAutocompleteControl, fillCustomCombobox, fillNativeSelect, fillWorkdaySelect } from "@/lib/controlAdapters";
 import { prepareLogicalFields } from "@/lib/fieldLabeling";
 import { matchBooleanOption, matchTextOption } from "@/lib/optionMatcher";
+import { dismissCookieConsentIfPresent } from "@/lib/consentBarrier";
 import { isFinalSubmitLabel } from "@/lib/safety";
 import { normalizeText } from "@/lib/utils";
 import { CaptchaDetectionResult, CaptchaEvidence, DetectedField, RawScannedField } from "@/types";
@@ -396,37 +397,16 @@ export async function handleSelectDropdown(frame: Frame, selector: string, value
   await fillNativeSelect(frame, selector, value);
 }
 
-export async function handleRadioGroup(frame: Frame, field: DetectedField, value: string) {
-  const normalizedTarget = normalizeText(value);
-  const radioLocator = frame.locator(field.selector);
-  const name = await radioLocator.getAttribute("name");
+type RadioOptionTarget = {
+  inputSelector: string;
+  clickSelector: string;
+  label: string;
+  value: string;
+};
 
-  if (name) {
-    const group = frame.locator(`input[type="radio"][name="${name}"]`);
-    const count = await group.count();
-
-    for (let index = 0; index < count; index += 1) {
-      const option = group.nth(index);
-      const optionValue = normalizeText((await option.getAttribute("value")) ?? "");
-      const optionLabel = normalizeText(
-        await option.evaluate((element) => {
-          const linkedLabel =
-            (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) ||
-            element.closest("label")?.textContent ||
-            "";
-          return linkedLabel;
-        })
-      );
-
-      if (optionValue === normalizedTarget || optionLabel === normalizedTarget || optionLabel.includes(normalizedTarget) || optionValue.includes(normalizedTarget)) {
-        await option.check();
-        return;
-      }
-    }
-  }
-
-  const radioOptions = await frame.evaluate(
-    ({ selector }) => {
+async function resolveRadioOptions(frame: Frame, field: DetectedField): Promise<RadioOptionTarget[]> {
+  return frame
+    .evaluate(({ selector }) => {
       const target = document.querySelector(selector);
       if (!target) return [];
 
@@ -435,34 +415,211 @@ export async function handleRadioGroup(frame: Frame, field: DetectedField, value
         target.parentElement;
       if (!container) return [];
 
-      return Array.from(container.querySelectorAll("input[type='radio'], [role='radio']")).map((element, index) => {
-        const id = element.getAttribute("data-applypilot-radio-option-id") || `applypilot-radio-option-${index}`;
-        element.setAttribute("data-applypilot-radio-option-id", id);
+      const setMarker = (element: Element | null, attribute: string, prefix: string) => {
+        if (!(element instanceof HTMLElement)) return "";
+        const existing = element.getAttribute(attribute);
+        if (existing) {
+          return `[${attribute}="${existing}"]`;
+        }
+
+        const id = `${prefix}-${Math.random().toString(36).slice(2)}`;
+        element.setAttribute(attribute, id);
+        return `[${attribute}="${id}"]`;
+      };
+
+      const options: Array<{ inputSelector: string; clickSelector: string; label: string; value: string }> = [];
+      const visitedInputs = new Set<string>();
+      const registerOption = (input: HTMLInputElement | null, wrapperCandidate: Element | null) => {
+        if (!(input instanceof HTMLInputElement)) return;
+        const inputKey = input.id || input.name || input.value || String(options.length);
+        if (visitedInputs.has(inputKey)) return;
+        visitedInputs.add(inputKey);
+
+        const wrapper = wrapperCandidate ?? input.closest("label") ?? input.parentElement ?? input;
         const linkedLabel =
-          (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) ||
-          element.closest("label")?.textContent ||
-          (element.parentElement?.textContent ?? "") ||
+          (input.getAttribute("id") && document.querySelector(`label[for="${input.getAttribute("id")}"]`)?.textContent) ||
+          wrapper?.textContent ||
+          input.closest("label")?.textContent ||
           "";
-        return {
-          selector: `[data-applypilot-radio-option-id="${id}"]`,
+
+        options.push({
+          inputSelector: setMarker(input, "data-applypilot-radio-input-id", "applypilot-radio-input"),
+          clickSelector: setMarker(wrapper, "data-applypilot-radio-option-id", "applypilot-radio-option"),
           label: linkedLabel.replace(/\s+/g, " ").trim(),
-          value: (element.getAttribute("value") || "").trim()
-        };
-      });
-    },
-    { selector: field.selector }
-  );
+          value: (input.getAttribute("value") || "").trim()
+        });
+      };
+
+      for (const input of Array.from(container.querySelectorAll("input[type='radio']"))) {
+        registerOption(
+          input instanceof HTMLInputElement ? input : null,
+          input.closest("[role='radio']") ?? input.closest("label") ?? input.parentElement
+        );
+      }
+
+      for (const wrapper of Array.from(container.querySelectorAll("[role='radio']"))) {
+        registerOption(wrapper.querySelector("input[type='radio']"), wrapper);
+      }
+
+      return options.filter((option) => option.inputSelector && option.clickSelector);
+    }, { selector: field.selector })
+    .catch(() => []);
+}
+
+async function radioOptionSelected(frame: Frame, option: RadioOptionTarget) {
+  return frame
+    .evaluate(({ inputSelector, clickSelector }) => {
+      const input = document.querySelector(inputSelector);
+      const wrapper = document.querySelector(clickSelector);
+      const inputChecked = input instanceof HTMLInputElement ? input.checked : false;
+      const wrapperChecked =
+        wrapper?.getAttribute("aria-checked") === "true" || wrapper?.getAttribute("aria-selected") === "true";
+      return inputChecked || wrapperChecked;
+    }, option)
+    .catch(() => false);
+}
+
+export async function handleRadioGroup(frame: Frame, field: DetectedField, value: string) {
+  const normalizedTarget = normalizeText(value);
+  let radioOptions = await resolveRadioOptions(frame, field);
+
+  if (!radioOptions.length) {
+    const radioLocator = frame.locator(field.selector);
+    const name = await radioLocator.getAttribute("name").catch(() => null);
+
+    if (name) {
+      const group = frame.locator(`input[type="radio"][name="${name}"]`);
+      const count = await group.count().catch(() => 0);
+      const fallbackOptions: RadioOptionTarget[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const option = group.nth(index);
+        const inputSelector = await option
+          .evaluate((element) => {
+            if (!(element instanceof HTMLElement)) return "";
+            const id = element.getAttribute("data-applypilot-radio-input-id") || `applypilot-radio-input-${Math.random().toString(36).slice(2)}`;
+            element.setAttribute("data-applypilot-radio-input-id", id);
+            return `[data-applypilot-radio-input-id="${id}"]`;
+          })
+          .catch(() => "");
+        const clickSelector = await option
+          .evaluate((element) => {
+            const wrapper = element.closest("[role='radio']") ?? element.closest("label") ?? element.parentElement ?? element;
+            if (!(wrapper instanceof HTMLElement)) return "";
+            const id = wrapper.getAttribute("data-applypilot-radio-option-id") || `applypilot-radio-option-${Math.random().toString(36).slice(2)}`;
+            wrapper.setAttribute("data-applypilot-radio-option-id", id);
+            return `[data-applypilot-radio-option-id="${id}"]`;
+          })
+          .catch(() => "");
+        const optionValue = ((await option.getAttribute("value").catch(() => "")) || "").trim();
+        const optionLabel = (
+          await option.evaluate((element) => {
+            const linkedLabel =
+              (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) ||
+              element.closest("[role='radio']")?.textContent ||
+              element.closest("label")?.textContent ||
+              "";
+            return linkedLabel;
+          })
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+        if (inputSelector && clickSelector) {
+          fallbackOptions.push({
+            inputSelector,
+            clickSelector,
+            label: optionLabel,
+            value: optionValue
+          });
+        }
+      }
+
+      radioOptions = fallbackOptions;
+    }
+  }
+
+  if (!radioOptions.length) {
+    const fallbackOptions = await frame
+      .evaluate(({ selector }) => {
+        const target = document.querySelector(selector);
+        if (!target) return [];
+
+        const container =
+          target.closest("[data-applypilot-group-id], fieldset, [role='radiogroup'], [role='group'], .application-question, .form-field, .form-group") ??
+          target.parentElement;
+        if (!container) return [];
+
+        return Array.from(container.querySelectorAll("input[type='radio'], [role='radio']"))
+          .map((element) => {
+            const input =
+              element instanceof HTMLInputElement && element.type === "radio"
+                ? element
+                : element.querySelector("input[type='radio']") ?? element.closest("label")?.querySelector("input[type='radio']");
+            const wrapper =
+              element.getAttribute("role") === "radio" ? element : element.closest("[role='radio']") ?? element.closest("label") ?? element.parentElement;
+            if (!(input instanceof HTMLInputElement) || !(wrapper instanceof HTMLElement)) return null;
+
+            const inputId = input.getAttribute("data-applypilot-radio-input-id") || `applypilot-radio-input-${Math.random().toString(36).slice(2)}`;
+            input.setAttribute("data-applypilot-radio-input-id", inputId);
+            const wrapperId = wrapper.getAttribute("data-applypilot-radio-option-id") || `applypilot-radio-option-${Math.random().toString(36).slice(2)}`;
+            wrapper.setAttribute("data-applypilot-radio-option-id", wrapperId);
+            const linkedLabel =
+              (input.getAttribute("id") && document.querySelector(`label[for="${input.getAttribute("id")}"]`)?.textContent) ||
+              wrapper.textContent ||
+              input.closest("label")?.textContent ||
+              "";
+
+            return {
+              inputSelector: `[data-applypilot-radio-input-id="${inputId}"]`,
+              clickSelector: `[data-applypilot-radio-option-id="${wrapperId}"]`,
+              label: linkedLabel.replace(/\s+/g, " ").trim(),
+              value: (input.getAttribute("value") || "").trim()
+            };
+          })
+          .filter((option): option is { inputSelector: string; clickSelector: string; label: string; value: string } => Boolean(option));
+      }, { selector: field.selector })
+      .catch(() => []);
+
+    radioOptions = fallbackOptions;
+  }
 
   for (const option of radioOptions) {
     const optionValue = normalizeText(option.value);
     const optionLabel = normalizeText(option.label);
     if (optionValue === normalizedTarget || optionLabel === normalizedTarget || optionLabel.includes(normalizedTarget) || optionValue.includes(normalizedTarget)) {
-      await frame.locator(option.selector).first().click({ timeout: 10_000, force: true });
-      return;
+      const clickLocator = frame.locator(option.clickSelector).first();
+
+      try {
+        await clickLocator.click({ timeout: 10_000 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/intercepts pointer events/i.test(message)) {
+          await dismissCookieConsentIfPresent(frame.page(), { waitForAppearanceMs: 1_500 }).catch(() => false);
+          await clickLocator.click({ timeout: 5_000, force: true }).catch(async () => {
+            await clickLocator.evaluate((element) => {
+              if (element instanceof HTMLElement) {
+                element.click();
+              }
+            });
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      if (await radioOptionSelected(frame, option)) {
+        return;
+      }
+
+      await frame.locator(option.inputSelector).check({ force: true }).catch(() => undefined);
+      if (await radioOptionSelected(frame, option)) {
+        return;
+      }
+
+      throw new Error("Radio selection could not be verified.");
     }
   }
 
-  throw new Error(name ? "No matching radio option found." : "Radio group is missing a usable selection target.");
+  throw new Error(radioOptions.length ? "No matching radio option found." : "Radio group is missing a usable selection target.");
 }
 
 export async function handleCheckbox(frame: Frame, selector: string, value: string) {
@@ -761,18 +918,29 @@ async function fillTextControl(
       ? adaptPhoneValue(value)
       : value;
 
-  try {
-    await locator.click({ timeout: 10_000 });
+  const commitTextValue = async () => {
     await locator.fill(nextValue);
     await locator.evaluate((element) => {
       if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
       element.dispatchEvent(new Event("change", { bubbles: true }));
       element.blur();
     });
+  };
+
+  try {
+    await commitTextValue();
     return nextValue;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!/intercepts pointer events|subtree intercepts pointer events/i.test(message) && !options.preferDirectInput) {
+    if (/intercepts pointer events|subtree intercepts pointer events/i.test(message)) {
+      const dismissed = await dismissCookieConsentIfPresent(frame.page(), { waitForAppearanceMs: 1_500 }).catch(() => false);
+      if (dismissed) {
+        await commitTextValue();
+        return nextValue;
+      }
+    }
+
+    if (!options.preferDirectInput) {
       throw error;
     }
   }

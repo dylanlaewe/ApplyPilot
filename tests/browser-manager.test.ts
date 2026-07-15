@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { getOpenSessionCount, getOrCreateBrowserContext, getOrCreateSessionPage, resetBrowserManagerForTests } from "@/lib/browserManager";
+import {
+  clearPersistentProfileSingletonArtifacts,
+  getOpenSessionCount,
+  getOrCreateBrowserContext,
+  getOrCreateSessionPage,
+  isPersistentProfileLockError,
+  resetBrowserManagerForTests
+} from "@/lib/browserManager";
 import { extractJobMetadata } from "@/lib/jobMetadata";
 
 Object.assign(process.env, { NODE_ENV: "test" });
@@ -174,4 +184,66 @@ test("job metadata extracts company and role from apply-for titles without swapp
 
   await page.close();
   await resetBrowserManagerForTests();
+});
+
+test("stale persistent browser profile singleton artifacts are cleared when the profile is not in use", async () => {
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "applypilot-browser-profile-"));
+  const socketDir = await mkdtemp(path.join(os.tmpdir(), "applypilot-browser-socket-"));
+  const socketPath = path.join(socketDir, "SingletonSocket");
+
+  await mkdir(path.join(profileDir, "Default"), { recursive: true });
+  await writeFile(socketPath, "");
+  await symlink("MacBookPro-9920", path.join(profileDir, "SingletonLock"));
+  await symlink("362092140875988174", path.join(profileDir, "SingletonCookie"));
+  await symlink(socketPath, path.join(profileDir, "SingletonSocket"));
+  await writeFile(path.join(profileDir, "RunningChromeVersion"), "149.0.7827.55:1");
+
+  const cleared = await clearPersistentProfileSingletonArtifacts(profileDir, "");
+
+  assert.equal(cleared, true);
+  await assert.rejects(readlink(path.join(profileDir, "SingletonLock")));
+  await assert.rejects(readlink(path.join(profileDir, "SingletonCookie")));
+  await assert.rejects(readlink(path.join(profileDir, "SingletonSocket")));
+
+  await rm(profileDir, { recursive: true, force: true });
+  await rm(socketDir, { recursive: true, force: true });
+});
+
+test("stale singleton artifacts still clear when only a transient process command remains", async () => {
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "applypilot-browser-profile-live-"));
+  const socketDir = await mkdtemp(path.join(os.tmpdir(), "applypilot-browser-socket-live-"));
+  const socketPath = path.join(socketDir, "SingletonSocket");
+
+  await writeFile(socketPath, "");
+  await symlink("MacBookPro-9920", path.join(profileDir, "SingletonLock"));
+  await symlink(socketPath, path.join(profileDir, "SingletonSocket"));
+
+  const cleared = await clearPersistentProfileSingletonArtifacts(
+    profileDir,
+    `/Applications/Test.app --user-data-dir=${profileDir} --remote-debugging-pipe`
+  );
+
+  assert.equal(cleared, true);
+  await assert.rejects(readlink(path.join(profileDir, "SingletonLock")));
+  assert.equal(isPersistentProfileLockError(new Error("Opening in existing browser session.")), true);
+  assert.equal(isPersistentProfileLockError(new Error("some other launch error")), false);
+
+  await rm(profileDir, { recursive: true, force: true });
+  await rm(socketDir, { recursive: true, force: true });
+});
+
+test("persistent profile singleton artifacts are left alone when no socket clue exists and the profile appears active", async () => {
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "applypilot-browser-profile-busy-"));
+
+  await symlink("MacBookPro-9920", path.join(profileDir, "SingletonLock"));
+
+  const cleared = await clearPersistentProfileSingletonArtifacts(
+    profileDir,
+    `/Applications/Test.app --user-data-dir=${profileDir} --remote-debugging-pipe`
+  );
+
+  assert.equal(cleared, false);
+  assert.equal(await readlink(path.join(profileDir, "SingletonLock")), "MacBookPro-9920");
+
+  await rm(profileDir, { recursive: true, force: true });
 });

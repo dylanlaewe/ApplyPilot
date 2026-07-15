@@ -15,6 +15,7 @@ import { resolveAutomationStrategyForPage } from "@/lib/atsStrategy";
 import { createAuditEntry } from "@/lib/auditLog";
 import { writeGenericPassDiagnostic } from "@/lib/autofillDiagnostics";
 import { SAFE_AUTOFILL_THRESHOLD } from "@/lib/autofillRules";
+import { dismissCookieConsentIfPresent } from "@/lib/consentBarrier";
 import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
@@ -37,6 +38,7 @@ async function runGenericAutofillPass(sessionId: string, session: ApplicationSes
   recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
   await waitForPageReadiness(runtime.page);
   recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
+  await dismissCookieConsentIfPresent(runtime.page, { waitForAppearanceMs: 1_500 }).catch(() => false);
   const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
 
   if (prepared.waiting) {
@@ -234,6 +236,7 @@ export async function runAutofillPass(
     recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
     await waitForPageReadiness(runtime.page);
     recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
+    await dismissCookieConsentIfPresent(runtime.page, { waitForAppearanceMs: 1_500 }).catch(() => false);
 
     const strategy = await resolveAutomationStrategyForPage({
       page: runtime.page,
