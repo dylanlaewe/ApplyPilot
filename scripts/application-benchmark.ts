@@ -1661,6 +1661,10 @@ async function preparePageForBenchmark(
         manualBarriers.push("Workday redirected to a job-search or unavailable page instead of an application form.");
         return { status: "site_unavailable" as const };
       }
+      if (workdayBarrier.kind === "not_scorable") {
+        manualBarriers.push(workdayBarrier.nextAction);
+        return { status: "not_scorable" as const };
+      }
       if (!workdayBarrier.formReached) {
         manualBarriers.push(workdayBarrier.nextAction);
         return { status: "manual_barrier" as const };

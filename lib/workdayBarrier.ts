@@ -7,6 +7,7 @@ import type { CaptchaDetectionResult, DetectedField } from "@/types";
 
 export type WorkdayBarrierKind =
   | "form_reached"
+  | "not_scorable"
   | "login_required"
   | "account_creation_required"
   | "email_verification_required"
@@ -53,6 +54,14 @@ const EMAIL_VERIFICATION_PATTERNS = [/verify email/i, /verification email/i, /co
 const VERIFICATION_CODE_PATTERNS = [/verification code/i, /enter code/i, /one-?time code/i, /security code/i];
 const MFA_PATTERNS = [/multi-?factor/i, /two-?factor/i, /authenticator/i, /authentication code/i];
 const TERMS_PATTERNS = [/terms and conditions/i, /i agree/i, /acknowledge/i, /legal acknowledgement/i];
+const APPLY_START_PATTERNS = [
+  /current step 1 of \d+/i,
+  /back to job posting/i,
+  /autofill with resume/i,
+  /apply manually/i,
+  /use my last application/i,
+  /create account\/sign in/i
+];
 const APPLICATION_FORM_PATTERNS = [
   /my information/i,
   /contact information/i,
@@ -114,6 +123,12 @@ function buildBarrierMessage(kind: WorkdayBarrierKind, accountAssistAllowed: boo
         message: "Terms acknowledgement required.",
         nextAction: "Review and accept the required terms yourself in the browser before continuing."
       };
+    case "not_scorable":
+      return {
+        message: "Application start page detected.",
+        nextAction:
+          "Continue through the Workday start step in the browser. ApplyPilot will wait until visible account fields or the application form appears."
+      };
     case "site_unavailable":
       return {
         message: "Job unavailable.",
@@ -159,6 +174,12 @@ export function classifyWorkdayBarrierSnapshot(
     accountAssistFields.some((input) => /first name/i.test(input.label)) ||
     accountAssistFields.some((input) => /last name/i.test(input.label)) ||
     accountAssistFields.some((input) => /confirm email/i.test(input.label));
+  const hasApplyStartShell =
+    hasPattern(APPLY_START_PATTERNS, combined) &&
+    !hasPasswordField &&
+    !hasVerificationCodeField &&
+    !hasStructuredAccountSetupFields &&
+    !visibleApplicationInputs.length;
 
   let kind: WorkdayBarrierKind = "unknown_barrier";
   let reason = "The page did not expose a safe, recognized application-form state yet.";
@@ -176,6 +197,9 @@ export function classifyWorkdayBarrierSnapshot(
   } else if (hasPattern(EMAIL_VERIFICATION_PATTERNS, combined)) {
     kind = "email_verification_required";
     reason = "The page is asking the user to verify an email address before continuing.";
+  } else if (hasApplyStartShell) {
+    kind = "not_scorable";
+    reason = "The page is still on a Workday apply-start step without visible account fields or application inputs.";
   } else if (hasPattern(ACCOUNT_CREATION_PATTERNS, combined) || (hasStructuredAccountSetupFields && hasPasswordField)) {
     kind = "account_creation_required";
     reason = "The page is asking the user to create a Workday account.";
@@ -214,47 +238,55 @@ export async function detectWorkdayBarrier(
   } = {}
 ) {
   const snapshot = await page.evaluate(() => {
-    const clean = (value = "") => value.replace(/\s+/g, " ").trim();
-    const isVisible = (element: Element | null) => {
-      if (!(element instanceof HTMLElement)) return false;
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-    };
-    const labelFor = (element: Element) => {
-      const id = element.getAttribute("id");
-      const explicit = id ? document.querySelector(`label[for="${id}"]`) : null;
-      const wrapped = element.closest("label");
-      const fieldset = element.closest("fieldset, [role='group'], [role='radiogroup']");
-      const legend = fieldset?.querySelector("legend, h1, h2, h3, h4");
-      return clean(
-        explicit?.textContent ||
-          wrapped?.textContent ||
-          legend?.textContent ||
-          element.getAttribute("aria-label") ||
-          element.getAttribute("placeholder") ||
-          ""
-      );
-    };
-
     return {
       url: window.location.href,
       hostname: window.location.hostname,
-      title: clean(document.title),
-      heading: clean(
-        document.querySelector("h1, [data-automation-id='pageHeader'], [data-automation-id='formTitle'], [data-automation-id='titleText']")?.textContent ||
-          ""
-      ),
-      bodyText: clean(document.body.innerText || ""),
-      buttons: Array.from(document.querySelectorAll("button, a, [role='button']")).filter(isVisible).map((element) => clean(element.textContent || "")).filter(Boolean).slice(0, 30),
+      title: (document.title || "").replace(/\s+/g, " ").trim(),
+      heading: (
+        document.querySelector("h1, [data-automation-id='pageHeader'], [data-automation-id='formTitle'], [data-automation-id='titleText']")?.textContent || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim(),
+      bodyText: (document.body.innerText || "").replace(/\s+/g, " ").trim(),
+      buttons: Array.from(document.querySelectorAll("button, a, [role='button']"))
+        .filter((element) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        })
+        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .slice(0, 30),
       visibleInputs: Array.from(document.querySelectorAll("input, textarea, select"))
-        .filter(isVisible)
+        .filter((element) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        })
         .map((element) => ({
-          type: clean(element.getAttribute("type") || element.tagName.toLowerCase()),
-          name: clean(element.getAttribute("name") || ""),
-          id: clean(element.getAttribute("id") || ""),
-          label: labelFor(element),
-          autocomplete: clean(element.getAttribute("autocomplete") || "")
+          type: (element.getAttribute("type") || element.tagName.toLowerCase()).replace(/\s+/g, " ").trim(),
+          name: (element.getAttribute("name") || "").replace(/\s+/g, " ").trim(),
+          id: (element.getAttribute("id") || "").replace(/\s+/g, " ").trim(),
+          label: (() => {
+            const id = element.getAttribute("id");
+            const explicit = id ? document.querySelector(`label[for="${id}"]`) : null;
+            const wrapped = element.closest("label");
+            const fieldset = element.closest("fieldset, [role='group'], [role='radiogroup']");
+            const legend = fieldset?.querySelector("legend, h1, h2, h3, h4");
+            return (
+              explicit?.textContent ||
+              wrapped?.textContent ||
+              legend?.textContent ||
+              element.getAttribute("aria-label") ||
+              element.getAttribute("placeholder") ||
+              ""
+            )
+              .replace(/\s+/g, " ")
+              .trim();
+          })(),
+          autocomplete: (element.getAttribute("autocomplete") || "").replace(/\s+/g, " ").trim()
         }))
     } satisfies WorkdayBarrierSnapshot;
   });
@@ -320,6 +352,8 @@ export function prepareWorkdayAccountAssistFields(fields: DetectedField[]) {
 
 export function getWorkdayBarrierStatusLabel(kind: WorkdayBarrierKind) {
   switch (kind) {
+    case "not_scorable":
+      return "Application start page";
     case "login_required":
       return "Login required";
     case "account_creation_required":

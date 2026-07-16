@@ -36,6 +36,7 @@ function overlayStatusLabel(session: ApplicationSession) {
     if (/captcha required/.test(normalized)) return getWorkdayBarrierStatusLabel("captcha_required");
     if (/\bmfa required/.test(normalized)) return getWorkdayBarrierStatusLabel("mfa_required");
     if (/terms acknowledgement required/.test(normalized)) return getWorkdayBarrierStatusLabel("terms_required");
+    if (/application start page detected/.test(normalized)) return getWorkdayBarrierStatusLabel("not_scorable");
     if (/job unavailable/.test(normalized)) return getWorkdayBarrierStatusLabel("site_unavailable");
     if (/application form detected/.test(normalized)) return getWorkdayBarrierStatusLabel("form_reached");
     return "Waiting for the page";

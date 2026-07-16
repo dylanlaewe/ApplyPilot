@@ -103,6 +103,23 @@ test("Workday barrier classifier detects account creation pages and notes safe a
   assert.match(result.nextAction, /name and email/i);
 });
 
+test("Workday barrier classifier marks apply-start shells as not scorable until fields appear", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      title: "Careers",
+      bodyText:
+        "Back to Job Posting Customer Success Manager current step 1 of 7 Create Account/Sign In step 2 of 7 My Information step 3 of 7 My Experience step 4 of 7 Application Questions step 5 of 7 Voluntary Disclosures step 6 of 7 Self Identify step 7 of 7 Review",
+      buttons: ["Sign In", "Search for Jobs", "Back to Job Posting"],
+      visibleInputs: []
+    })
+  );
+
+  assert.equal(result.kind, "not_scorable");
+  assert.equal(result.formReached, false);
+  assert.equal(result.manualBarrier, true);
+  assert.equal(getWorkdayBarrierStatusLabel(result.kind), "Application start page");
+});
+
 test("Workday barrier classifier detects verification, captcha, MFA, and form states", () => {
   const emailVerification = classifyWorkdayBarrierSnapshot(
     snapshot({

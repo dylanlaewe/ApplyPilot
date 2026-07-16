@@ -234,10 +234,11 @@
     "company": "Brown University",
     "roleTitle": "Associate Director",
     "url": "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/jobs/details/Associate-Director--Community-Engaged-Data-and-Evaluation-Collaborative_REQ207311",
-    "active": true,
-    "lastVerifiedAt": "2026-07-15",
-    "tags": ["experimental", "workday", "login-barrier"],
-    "expectedFieldTypes": ["text", "dropdown"]
+    "active": false,
+    "disabledReason": "The posting now redirects to a Workday unavailable/search page instead of a live application state.",
+    "availabilityRegression": true,
+    "tags": ["regression", "site-unavailable", "workday"],
+    "expectedFieldTypes": ["site_availability"]
   },
   {
     "id": "redhat-workday",
@@ -246,10 +247,11 @@
     "company": "Red Hat",
     "roleTitle": "Software Engineer",
     "url": "https://redhat.wd5.myworkdayjobs.com/en-US/jobs/details/Software-Engineer_R-057018-1?q=software+engineer",
-    "active": true,
-    "lastVerifiedAt": "2026-07-15",
-    "tags": ["experimental", "workday", "login-barrier"],
-    "expectedFieldTypes": ["text", "dropdown"]
+    "active": false,
+    "disabledReason": "The posting now redirects to a Workday unavailable/search page instead of a live application state.",
+    "availabilityRegression": true,
+    "tags": ["regression", "site-unavailable", "workday"],
+    "expectedFieldTypes": ["site_availability"]
   },
   {
     "id": "brandeis-workday",
@@ -258,10 +260,11 @@
     "company": "Brandeis University",
     "roleTitle": "Web Content and Analytics Specialist",
     "url": "https://brandeis.wd5.myworkdayjobs.com/en-US/Jobs/details/Web-Content-and-Analytics-Specialist_R0011431-1?q=web+content&source=JobTarget&utm_source=JobTarget",
-    "active": true,
-    "lastVerifiedAt": "2026-07-15",
-    "tags": ["experimental", "workday", "login-barrier"],
-    "expectedFieldTypes": ["text", "dropdown"]
+    "active": false,
+    "disabledReason": "The posting now redirects to a Workday unavailable/search page instead of a live application state.",
+    "availabilityRegression": true,
+    "tags": ["regression", "site-unavailable", "workday"],
+    "expectedFieldTypes": ["site_availability"]
   },
   {
     "id": "amadeus-workday",
@@ -270,10 +273,83 @@
     "company": "Amadeus",
     "roleTitle": "QA Engineer",
     "url": "https://amadeus.wd502.myworkdayjobs.com/en-US/jobs/details/QA-Engineer_R33642-2?locations=444ed919e32d1000f5c2af08f0870000&q=software+testing",
+    "active": false,
+    "disabledReason": "The posting now redirects to a Workday unavailable/search page instead of a live application state.",
+    "availabilityRegression": true,
+    "tags": ["regression", "site-unavailable", "workday"],
+    "expectedFieldTypes": ["site_availability"]
+  },
+  {
+    "id": "flex-deal-desk-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Flex",
+    "roleTitle": "Deal Desk Analyst",
+    "url": "https://flextronics.wd1.myworkdayjobs.com/en-US/Careers/job/USA%2C-Remote/Deal-Desk-Analyst_WD223692-1/apply/applyManually",
     "active": true,
-    "lastVerifiedAt": "2026-07-15",
-    "tags": ["experimental", "workday", "login-barrier"],
-    "expectedFieldTypes": ["text", "dropdown"]
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "form-reached"],
+    "expectedFieldTypes": ["navigation", "text", "dropdown"]
+  },
+  {
+    "id": "flex-materials-lead-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Flex",
+    "roleTitle": "Materials Lead",
+    "url": "https://flextronics.wd1.myworkdayjobs.com/en-US/Careers/job/USA%2C-SC%2C-Orangeburg/Materials-Lead_WD222958/apply/applyManually",
+    "active": true,
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "form-reached"],
+    "expectedFieldTypes": ["navigation", "text", "dropdown"]
+  },
+  {
+    "id": "broadridge-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Broadridge",
+    "roleTitle": "Client Policy Analyst - Compensation (remote)",
+    "url": "https://broadridge.wd5.myworkdayjobs.com/en-US/Careers/job/New-York%2C-NY/Client-Policy-Analyst---Compensation--remote-_JR1083146/apply/applyManually",
+    "active": true,
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "account-creation"],
+    "expectedFieldTypes": ["navigation", "text"]
+  },
+  {
+    "id": "modivcare-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Modivcare",
+    "roleTitle": "Care Center Representative (Overnight)",
+    "url": "https://modivcare.wd1.myworkdayjobs.com/en-US/careers/job/Remote/Care-Center-Representative---August--Overnight-_JR103756/apply/applyManually",
+    "active": true,
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "account-creation"],
+    "expectedFieldTypes": ["navigation", "text"]
+  },
+  {
+    "id": "newbalance-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "New Balance",
+    "roleTitle": "Retail Sale Associate (PT) - Woodstock, GA",
+    "url": "https://newbalance.wd1.myworkdayjobs.com/en-US/careers/job/Atlanta-Shoppes%2C-GA-Retail/Retail-Sale-Associate--PT----Woodstock--GA_R38743/apply/applyManually",
+    "active": true,
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "apply-start"],
+    "expectedFieldTypes": ["navigation"]
+  },
+  {
+    "id": "hancockwhitney-workday",
+    "phase": 5,
+    "ats": "workday",
+    "company": "Hancock Whitney",
+    "roleTitle": "Business Automation Engineer / Web Developer (On-site)",
+    "url": "https://hancockwhitney.wd5.myworkdayjobs.com/en-US/Careers/job/Gulfport-Building-at-Hancock-Whitney-Plaza----Gulfport%2C-MS/Business-Automation-Engineer---Web-Developer--On-site-_R017106/apply/applyManually",
+    "active": true,
+    "lastVerifiedAt": "2026-07-16",
+    "tags": ["experimental", "workday", "apply-start"],
+    "expectedFieldTypes": ["navigation"]
   },
   {
     "id": "iboss-jobvite",
