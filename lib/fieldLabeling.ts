@@ -187,9 +187,9 @@ function isLikelyRealControl(field: RawScannedField) {
 function choiceGroupKey(field: RawScannedField) {
   if (!looksLikeChoiceField(field)) return "";
 
-  const explicitGroupKey = sanitizeFieldLabel(field.groupKey);
-  if (explicitGroupKey && !isDomNoiseLabel(explicitGroupKey)) {
-    return `${field.type}:${normalizeText(explicitGroupKey)}`;
+  const rawGroupKey = cleanWhitespace(field.groupKey);
+  if (rawGroupKey) {
+    return `${field.type}:group:${normalizeText(rawGroupKey)}`;
   }
 
   const name = sanitizeFieldLabel(field.name);
@@ -206,6 +206,43 @@ function choiceGroupKey(field: RawScannedField) {
 
 function normalizeChoiceOption(field: RawScannedField) {
   return sanitizeFieldLabel(field.optionLabel || field.label || field.detectedValue);
+}
+
+function stripTrailingChoiceOption(text: string, option: string) {
+  const cleanedText = sanitizeFieldLabel(text);
+  const cleanedOption = sanitizeFieldLabel(option);
+  if (!cleanedText || !cleanedOption) return "";
+
+  const escapedOption = cleanedOption.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const stripped = cleanedText.replace(new RegExp(`(?:\\s+|\\b)${escapedOption}$`, "i"), "").trim();
+  return sanitizeFieldLabel(stripped);
+}
+
+function deriveGroupedChoiceLabel(group: RawScannedField[], options: string[]) {
+  for (const field of group) {
+    const candidateBase =
+      stripTrailingChoiceOption(field.label, field.optionLabel || "") ||
+      stripTrailingChoiceOption(field.ariaLabelledByText || "", field.optionLabel || "") ||
+      stripTrailingChoiceOption(field.questionContainerText || "", field.optionLabel || "") ||
+      stripTrailingChoiceOption(field.nearbyText || "", field.optionLabel || "");
+
+    if (candidateBase && !isDomNoiseLabel(candidateBase) && !options.some((option) => normalizeText(option) === normalizeText(candidateBase))) {
+      return candidateBase;
+    }
+  }
+
+  for (const field of group) {
+    const candidate =
+      sanitizeFieldLabel(field.questionContainerText) ||
+      sanitizeFieldLabel(field.nearbyText) ||
+      sanitizeFieldLabel(field.ariaLabelledByText) ||
+      sanitizeFieldLabel(field.label);
+    if (candidate && !isDomNoiseLabel(candidate) && !options.some((option) => normalizeText(option) === normalizeText(candidate))) {
+      return candidate;
+    }
+  }
+
+  return sanitizeFieldLabel(group[0]?.label || "");
 }
 
 export function groupChoiceControls(fields: RawScannedField[]) {
@@ -234,10 +271,10 @@ export function groupChoiceControls(fields: RawScannedField[]) {
 
     groupedControls += group.length - 1;
     const first = group[0];
-    const logicalLabel = sanitizeFieldLabel(first.groupLabel || first.legendText || first.questionContainerText || first.nearbyText) || first.label;
     const options = Array.from(
       new Set(group.map(normalizeChoiceOption).filter((option) => option && !isDomNoiseLabel(option)))
     );
+    const logicalLabel = deriveGroupedChoiceLabel(group, options) || first.label;
 
     collapsed.push({
       ...first,

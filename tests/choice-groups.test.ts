@@ -62,3 +62,49 @@ test("collapseChoiceFields merges repeated checkbox options into one grouped fie
   assert.deepEqual(collapsed[0].selectOptions, ["Female", "Male", "Non-binary"]);
   assert.match(collapsed[0].label, /what gender do you identify as/i);
 });
+
+test("collapseChoiceFields merges Workable-style radios that only share an internal group key", () => {
+  const collapsed = collapseChoiceFields([
+    rawField({
+      label: "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. YES",
+      name: "",
+      domId: "wrapper_yes",
+      type: "radio",
+      controlType: "radio",
+      role: "radio",
+      selector: "#auth_yes",
+      detectedValue: "checked",
+      nearbyText: "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. YES",
+      ariaLabelledByText:
+        "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. YES",
+      questionContainerText:
+        "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. YES",
+      optionLabel: "YES",
+      groupKey: "apf_workable_group_13",
+      groupLabel: "YES"
+    }),
+    rawField({
+      label: "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. NO",
+      name: "",
+      domId: "wrapper_no",
+      type: "radio",
+      controlType: "radio",
+      role: "radio",
+      selector: "#auth_no",
+      detectedValue: "unchecked",
+      nearbyText: "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. NO YES",
+      ariaLabelledByText:
+        "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. NO",
+      questionContainerText:
+        "Are you authorized to work in the U. S? If offered employment, you will be required to provide documentation to verify eligibility. NO YES",
+      optionLabel: "NO",
+      groupKey: "apf_workable_group_13",
+      groupLabel: "YES"
+    })
+  ]);
+
+  assert.equal(collapsed.length, 1);
+  assert.match(collapsed[0].label, /are you authorized to work/i);
+  assert.deepEqual(collapsed[0].selectOptions, ["YES", "NO"]);
+  assert.equal(collapsed[0].detectedValue, "YES");
+});

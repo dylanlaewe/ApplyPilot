@@ -81,12 +81,19 @@ async function readGroupedChoiceState(pageOrFrame: Page | Frame, field: Detected
       .catch(() => false);
     const label = normalizeText(
       await option.evaluate((element) => {
-        const linkedLabel =
-          (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) ||
-          element.closest("[role='radio']")?.textContent ||
-          element.closest("label")?.textContent ||
-          "";
-        return linkedLabel;
+        const explicitLabel =
+          (element.getAttribute("id") && document.querySelector(`label[for="${element.getAttribute("id")}"]`)?.textContent) || "";
+        const ownLabel = element.closest("label")?.textContent || "";
+        const optionContainer =
+          element.closest("[role='radio'], [role='checkbox']") ??
+          element.closest("label") ??
+          element.parentElement ??
+          element;
+        return (
+          (explicitLabel || "").replace(/\s+/g, " ").trim() ||
+          (ownLabel || "").replace(/\s+/g, " ").trim() ||
+          ((optionContainer.textContent || "") as string).replace(/\s+/g, " ").trim()
+        );
       })
     );
     states.push({ label, checked });
@@ -103,18 +110,24 @@ async function readNamelessRadioState(pageOrFrame: Page | Frame, field: Detected
     if (!container) return [];
 
     return Array.from(container.querySelectorAll("input[type='radio'], [role='radio']")).map((option) => {
-      const linkedLabel =
-        (option.getAttribute("id") && document.querySelector(`label[for="${option.getAttribute("id")}"]`)?.textContent) ||
-        option.closest("label")?.textContent ||
-        option.parentElement?.textContent ||
-        "";
+      const explicitLabel =
+        (option.getAttribute("id") && document.querySelector(`label[for="${option.getAttribute("id")}"]`)?.textContent) || "";
+      const ownLabel = option.closest("label")?.textContent || "";
+      const optionContainer =
+        option.closest("[role='radio']") ??
+        option.closest("label") ??
+        option.parentElement ??
+        option;
       const checked =
         option instanceof HTMLInputElement
           ? option.checked
           : option.getAttribute("aria-checked") === "true" || option.getAttribute("aria-selected") === "true";
 
       return {
-        label: linkedLabel.replace(/\s+/g, " ").trim(),
+        label:
+          (explicitLabel || "").replace(/\s+/g, " ").trim() ||
+          (ownLabel || "").replace(/\s+/g, " ").trim() ||
+          (((optionContainer.textContent || "") as string).replace(/\s+/g, " ").trim()),
         checked
       };
     });
