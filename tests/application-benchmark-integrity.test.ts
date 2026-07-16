@@ -89,6 +89,7 @@ function createResult(overrides: Record<string, unknown> = {}) {
     },
     manualBarriers: [],
     warnings: [],
+    cleanupWarnings: [],
     failureCategories: {
       FIELD_NOT_DETECTED: 0,
       LABEL_ASSOCIATION_FAILED: 0,
@@ -106,6 +107,23 @@ function createResult(overrides: Record<string, unknown> = {}) {
       INTENTIONALLY_UNRESOLVED: 0
     },
     stageResults: [],
+    lastRecordedStage: "case_completed",
+    cleanupOperations: [],
+    artifactCapture: {
+      fieldInventoryPersisted: true,
+      reportPersisted: true,
+      consoleErrorsPersisted: true,
+      pageErrorsPersisted: true,
+      failedRequestsPersisted: true,
+      tracePersisted: true,
+      screenshotsCaptured: 0,
+      screenshotCaptureAttempts: 0,
+      succeeded: true
+    },
+    browserCleanup: {
+      sessionPageClosed: true,
+      succeeded: true
+    },
     tracePath: "",
     screenshotPaths: [],
     fieldInventoryPath: "",
@@ -144,7 +162,29 @@ test("mergeTimedOutCaseResult preserves a persisted completed case instead of do
   assert.deepEqual(merged.manualBarriers, []);
 });
 
-test("mergeTimedOutCaseResult stamps the active suite metadata onto timeout results", () => {
+test("mergeTimedOutCaseResult records a cleanup warning instead of downgrading a completed case when teardown times out", () => {
+  const merged = mergeTimedOutCaseResult(
+    {
+      id: "case-2b",
+      ats: "greenhouse",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    "2026-07-15T15:00:00.000Z",
+    "suite-1",
+    "2026-07-15T15:00:00.000Z",
+    createResult({ status: "completed" }),
+    "cleanup_stop_trace"
+  );
+
+  assert.equal(merged.status, "completed");
+  assert.match(merged.cleanupWarnings[0] ?? "", /cleanup_stop_trace/i);
+  assert.equal(merged.cleanupOperations.at(-1)?.status, "timed_out");
+});
+
+test("mergeTimedOutCaseResult preserves a persisted runtime failure while stamping active suite metadata", () => {
   const merged = mergeTimedOutCaseResult(
     {
       id: "case-3",
@@ -160,9 +200,9 @@ test("mergeTimedOutCaseResult stamps the active suite metadata onto timeout resu
     createResult({ status: "failed_runtime", suiteRunId: "suite-old" })
   );
 
-  assert.equal(merged.status, "timeout");
-  assert.equal(merged.suiteRunId, "suite-fresh");
-  assert.equal(merged.suiteStartedAt, "2026-07-15T14:59:00.000Z");
+  assert.equal(merged.status, "failed_runtime");
+  assert.equal(merged.suiteRunId, "suite-old");
+  assert.equal(merged.suiteStartedAt, "2026-07-12T00:00:00.000Z");
 });
 
 test("resultBelongsToSuiteRun rejects stale case reports from an older suite run", () => {
@@ -410,6 +450,26 @@ test("timedOutCaseResult records the last benchmark stage in its timeout message
 
   assert.match(result.manualBarriers[0] ?? "", /during page_1_autofill_pass_2/i);
   assert.match(result.warnings[0] ?? "", /Last recorded stage: page_1_autofill_pass_2/i);
+});
+
+test("timedOutCaseResult records cleanup warnings separately for teardown timeouts", () => {
+  const result = timedOutCaseResult(
+    {
+      id: "case-4b",
+      ats: "greenhouse",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    "2026-07-16T00:00:00.000Z",
+    "suite-1",
+    "2026-07-16T00:00:00.000Z",
+    "cleanup_close_session_page"
+  );
+
+  assert.match(result.cleanupWarnings[0] ?? "", /cleanup_close_session_page/i);
+  assert.equal(result.cleanupOperations[0]?.status, "timed_out");
 });
 
 test("mergeTimedOutCaseResult preserves the tracked stage when no persisted partial result exists", () => {

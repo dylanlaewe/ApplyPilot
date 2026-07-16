@@ -184,6 +184,32 @@ type MetricSummary = {
   notMeasured: boolean;
 };
 
+type CleanupOperationStatus = "completed" | "timed_out" | "failed" | "skipped";
+
+type CleanupOperationResult = {
+  step: string;
+  status: CleanupOperationStatus;
+  durationMs: number;
+  detail: string;
+};
+
+type ArtifactCaptureStatus = {
+  fieldInventoryPersisted: boolean;
+  reportPersisted: boolean;
+  consoleErrorsPersisted: boolean;
+  pageErrorsPersisted: boolean;
+  failedRequestsPersisted: boolean;
+  tracePersisted: boolean;
+  screenshotsCaptured: number;
+  screenshotCaptureAttempts: number;
+  succeeded: boolean;
+};
+
+type BrowserCleanupStatus = {
+  sessionPageClosed: boolean;
+  succeeded: boolean;
+};
+
 type BenchmarkCaseResult = {
   suiteRunId: string;
   suiteStartedAt: string;
@@ -256,8 +282,13 @@ type BenchmarkCaseResult = {
   manualEffort: ManualEffort;
   manualBarriers: string[];
   warnings: string[];
+  cleanupWarnings: string[];
   failureCategories: Record<FailureCategory, number>;
   stageResults: StageResult[];
+  lastRecordedStage: string;
+  cleanupOperations: CleanupOperationResult[];
+  artifactCapture: ArtifactCaptureStatus;
+  browserCleanup: BrowserCleanupStatus;
   tracePath: string;
   screenshotPaths: string[];
   fieldInventoryPath: string;
@@ -267,6 +298,8 @@ type BenchmarkCaseResult = {
 
 type CaseExecutionProgress = {
   stage: string;
+  resultPersisted: boolean;
+  scored: boolean;
 };
 
 function formatTimeoutBarrier(startedAt: string, stage: string) {
@@ -275,6 +308,12 @@ function formatTimeoutBarrier(startedAt: string, stage: string) {
 
 function formatTimeoutWarning(stage: string) {
   return `Timed out before the benchmark case completed. Last recorded stage: ${stage}.`;
+}
+
+function formatCleanupWarning(stage: string, scored = true) {
+  return scored
+    ? `Cleanup timed out during ${stage} after scoring completed.`
+    : `Cleanup timed out during ${stage} while finalizing an incomplete case.`;
 }
 
 type BenchmarkSummary = {
@@ -325,6 +364,10 @@ const NON_ANSWERABLE_AUDIT_PATH = path.join(DEBUG_DIR, "non-answerable-field-aud
 const COVERAGE_AUDIT_PATH = path.join(DEBUG_DIR, "coverage-audit.md");
 const AUTOCOMPLETE_AUDIT_PATH = path.join(DEBUG_DIR, "autocomplete-audit.md");
 const FILE_UPLOAD_AUDIT_PATH = path.join(DEBUG_DIR, "file-upload-audit.md");
+const ARTIFACT_WRITE_TIMEOUT_MS = 2_000;
+const TRACE_STOP_TIMEOUT_MS = 3_000;
+const SESSION_CLOSE_TIMEOUT_MS = 3_000;
+const FINAL_REPORT_REWRITE_TIMEOUT_MS = 2_000;
 const SUITE_OUTPUT_PATHS = [
   SUMMARY_PATH,
   FAILURES_PATH,
@@ -455,6 +498,120 @@ function serializeError(error: unknown) {
     name: "UnknownError",
     message: String(error),
     stack: ""
+  };
+}
+
+function isCleanupStage(stage: string) {
+  return /^cleanup_/.test(stage) || stage === "closing_trace_and_browser" || stage === "writing_final_case_report";
+}
+
+function createDefaultArtifactCaptureStatus(screenshotPaths: string[], screenshotCaptureAttempts: number): ArtifactCaptureStatus {
+  return {
+    fieldInventoryPersisted: false,
+    reportPersisted: false,
+    consoleErrorsPersisted: false,
+    pageErrorsPersisted: false,
+    failedRequestsPersisted: false,
+    tracePersisted: false,
+    screenshotsCaptured: screenshotPaths.length,
+    screenshotCaptureAttempts,
+    succeeded: false
+  };
+}
+
+function createDefaultBrowserCleanupStatus(): BrowserCleanupStatus {
+  return {
+    sessionPageClosed: false,
+    succeeded: false
+  };
+}
+
+async function runBoundedOperation<T>(
+  progress: CaseExecutionProgress,
+  step: string,
+  timeoutMs: number,
+  operation: () => Promise<T>
+): Promise<{ status: CleanupOperationStatus; durationMs: number; detail: string; value?: T }> {
+  progress.stage = step;
+  const startedAt = Date.now();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const outcome = await Promise.race([
+      operation().then((value) => ({ kind: "value" as const, value })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+      })
+    ]);
+
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+
+    if (outcome.kind === "timeout") {
+      return {
+        status: "timed_out",
+        durationMs: Date.now() - startedAt,
+        detail: `Timed out after ${timeoutMs}ms.`
+      };
+    }
+
+    return {
+      status: "completed",
+      durationMs: Date.now() - startedAt,
+      detail: "Completed within timeout window.",
+      value: outcome.value
+    };
+  } catch (error) {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+
+    return {
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function buildOperationWarning(prefix: string, step: string, status: CleanupOperationStatus, detail: string) {
+  if (status === "completed" || status === "skipped") {
+    return "";
+  }
+
+  const reason = detail.trim();
+  return `${prefix} ${step}: ${reason}`.trim();
+}
+
+function appendCleanupIssueToResult(
+  result: BenchmarkCaseResult,
+  stage: string,
+  detail = formatCleanupWarning(stage, result.status === "completed" || result.status === "not_scorable")
+): BenchmarkCaseResult {
+  const existingOperation = result.cleanupOperations.find((operation) => operation.step === stage);
+  const cleanupOperations = existingOperation
+    ? result.cleanupOperations
+    : [
+        ...result.cleanupOperations,
+        {
+          step: stage,
+          status: "timed_out" as const,
+          durationMs: 0,
+          detail
+        }
+      ];
+
+  return {
+    ...result,
+    lastRecordedStage: stage,
+    cleanupWarnings: Array.from(new Set([detail, ...result.cleanupWarnings])),
+    warnings: Array.from(new Set([detail, ...result.warnings])),
+    cleanupOperations,
+    browserCleanup: {
+      ...result.browserCleanup,
+      succeeded: false
+    }
   };
 }
 
@@ -1676,6 +1833,162 @@ function shouldPreserveCompletedStatusAfterLateFailure(
   return currentStatus === "completed" && lateArtifactFailure && fullyVerified;
 }
 
+async function persistCaseArtifacts(
+  progress: CaseExecutionProgress,
+  result: BenchmarkCaseResult,
+  stageResults: StageResult[],
+  consoleErrors: string[],
+  pageErrors: Array<ReturnType<typeof serializeError>>,
+  failedRequests: Array<{ url: string; failure: string | null }>
+) {
+  const warnings = [...result.warnings];
+  const artifactCapture = {
+    ...result.artifactCapture,
+    screenshotsCaptured: result.screenshotPaths.length
+  };
+
+  const fieldInventoryWrite = await runBoundedOperation(progress, "persisting_field_inventory", ARTIFACT_WRITE_TIMEOUT_MS, () =>
+    writeFile(result.fieldInventoryPath, JSON.stringify(stageResults, null, 2), "utf8")
+  );
+  artifactCapture.fieldInventoryPersisted = fieldInventoryWrite.status === "completed";
+  const fieldInventoryWarning = buildOperationWarning(
+    "Artifact persistence issue during",
+    "persisting_field_inventory",
+    fieldInventoryWrite.status,
+    fieldInventoryWrite.detail
+  );
+  if (fieldInventoryWarning) {
+    warnings.push(fieldInventoryWarning);
+  }
+
+  const reportSnapshot = {
+    ...result,
+    warnings: Array.from(new Set(warnings)),
+    artifactCapture: {
+      ...artifactCapture,
+      reportPersisted: true
+    }
+  };
+  const reportWrite = await runBoundedOperation(progress, "persisting_case_report", ARTIFACT_WRITE_TIMEOUT_MS, () =>
+    writeFile(result.reportPath, JSON.stringify(reportSnapshot, null, 2), "utf8")
+  );
+  artifactCapture.reportPersisted = reportWrite.status === "completed";
+  const reportWarning = buildOperationWarning(
+    "Artifact persistence issue during",
+    "persisting_case_report",
+    reportWrite.status,
+    reportWrite.detail
+  );
+  if (reportWarning) {
+    warnings.push(reportWarning);
+  }
+
+  const consoleWrite = await runBoundedOperation(progress, "persisting_console_log", ARTIFACT_WRITE_TIMEOUT_MS, () =>
+    writeFile(path.join(path.dirname(result.reportPath), "console-errors.log"), consoleErrors.join("\n"), "utf8")
+  );
+  artifactCapture.consoleErrorsPersisted = consoleWrite.status === "completed";
+  const consoleWarning = buildOperationWarning(
+    "Artifact persistence issue during",
+    "persisting_console_log",
+    consoleWrite.status,
+    consoleWrite.detail
+  );
+  if (consoleWarning) {
+    warnings.push(consoleWarning);
+  }
+
+  const pageErrorWrite = await runBoundedOperation(progress, "persisting_page_errors", ARTIFACT_WRITE_TIMEOUT_MS, () =>
+    writeFile(path.join(path.dirname(result.reportPath), "page-errors.json"), JSON.stringify(pageErrors, null, 2), "utf8")
+  );
+  artifactCapture.pageErrorsPersisted = pageErrorWrite.status === "completed";
+  const pageErrorWarning = buildOperationWarning(
+    "Artifact persistence issue during",
+    "persisting_page_errors",
+    pageErrorWrite.status,
+    pageErrorWrite.detail
+  );
+  if (pageErrorWarning) {
+    warnings.push(pageErrorWarning);
+  }
+
+  const failedRequestsWrite = await runBoundedOperation(progress, "persisting_failed_requests", ARTIFACT_WRITE_TIMEOUT_MS, () =>
+    writeFile(path.join(path.dirname(result.reportPath), "failed-requests.json"), JSON.stringify(failedRequests, null, 2), "utf8")
+  );
+  artifactCapture.failedRequestsPersisted = failedRequestsWrite.status === "completed";
+  const failedRequestsWarning = buildOperationWarning(
+    "Artifact persistence issue during",
+    "persisting_failed_requests",
+    failedRequestsWrite.status,
+    failedRequestsWrite.detail
+  );
+  if (failedRequestsWarning) {
+    warnings.push(failedRequestsWarning);
+  }
+
+  artifactCapture.tracePersisted = existsSync(result.tracePath);
+  artifactCapture.succeeded = artifactCapture.fieldInventoryPersisted && artifactCapture.reportPersisted;
+
+  return {
+    ...result,
+    warnings: Array.from(new Set(warnings)),
+    artifactCapture
+  };
+}
+
+async function finalizeCaseCleanup(
+  progress: CaseExecutionProgress,
+  context: Awaited<ReturnType<typeof getOrCreateBrowserContext>>,
+  sessionId: string,
+  result: BenchmarkCaseResult
+) {
+  const cleanupWarnings = [...result.cleanupWarnings];
+  const cleanupOperations = [...result.cleanupOperations];
+  const browserCleanup = { ...result.browserCleanup };
+
+  const traceStop = await runBoundedOperation(progress, "cleanup_stop_trace", TRACE_STOP_TIMEOUT_MS, () =>
+    context.tracing.stop({ path: result.tracePath })
+  );
+  cleanupOperations.push({
+    step: "cleanup_stop_trace",
+    status: traceStop.status,
+    durationMs: traceStop.durationMs,
+    detail: traceStop.detail
+  });
+  if (traceStop.status !== "completed") {
+    cleanupWarnings.push(buildOperationWarning("Cleanup issue during", "cleanup_stop_trace", traceStop.status, traceStop.detail));
+  }
+
+  const pageClose = await runBoundedOperation(progress, "cleanup_close_session_page", SESSION_CLOSE_TIMEOUT_MS, () =>
+    closeSessionPage(sessionId)
+  );
+  cleanupOperations.push({
+    step: "cleanup_close_session_page",
+    status: pageClose.status,
+    durationMs: pageClose.durationMs,
+    detail: pageClose.detail
+  });
+  browserCleanup.sessionPageClosed = pageClose.status === "completed";
+  browserCleanup.succeeded = browserCleanup.sessionPageClosed;
+  if (pageClose.status !== "completed") {
+    cleanupWarnings.push(buildOperationWarning("Cleanup issue during", "cleanup_close_session_page", pageClose.status, pageClose.detail));
+  }
+
+  const artifactCapture = {
+    ...result.artifactCapture,
+    tracePersisted: existsSync(result.tracePath)
+  };
+
+  return {
+    ...result,
+    lastRecordedStage: progress.stage,
+    cleanupWarnings: Array.from(new Set(cleanupWarnings.filter(Boolean))),
+    warnings: Array.from(new Set([...result.warnings, ...cleanupWarnings.filter(Boolean)])),
+    cleanupOperations,
+    artifactCapture,
+    browserCleanup
+  };
+}
+
 function buildCaseResultFromProgress({
   testCase,
   suiteRunId,
@@ -1690,6 +2003,11 @@ function buildCaseResultFromProgress({
   unexpectedPageSwitches,
   manualBarriers,
   warnings,
+  cleanupWarnings = [],
+  lastRecordedStage = "unknown_stage",
+  cleanupOperations = [],
+  artifactCapture,
+  browserCleanup,
   tracePath,
   screenshotPaths,
   fieldInventoryPath,
@@ -1708,6 +2026,11 @@ function buildCaseResultFromProgress({
   unexpectedPageSwitches: number;
   manualBarriers: string[];
   warnings: string[];
+  cleanupWarnings?: string[];
+  lastRecordedStage?: string;
+  cleanupOperations?: CleanupOperationResult[];
+  artifactCapture?: ArtifactCaptureStatus;
+  browserCleanup?: BrowserCleanupStatus;
   tracePath: string;
   screenshotPaths: string[];
   fieldInventoryPath: string;
@@ -1788,8 +2111,13 @@ function buildCaseResultFromProgress({
     manualEffort: manualEffortFromInventory(allFieldRecords, retriesRequired, unexpectedPageSwitches),
     manualBarriers,
     warnings: Array.from(new Set(warnings)),
+    cleanupWarnings: Array.from(new Set(cleanupWarnings)),
     failureCategories: summarizeFailureCategories(allFieldRecords),
     stageResults,
+    lastRecordedStage,
+    cleanupOperations,
+    artifactCapture: artifactCapture ?? createDefaultArtifactCaptureStatus(screenshotPaths, screenshotPaths.length),
+    browserCleanup: browserCleanup ?? createDefaultBrowserCleanupStatus(),
     tracePath,
     screenshotPaths,
     fieldInventoryPath,
@@ -1803,7 +2131,7 @@ async function runCase(
   fixtures: SyntheticFixtures,
   suiteRunId: string,
   suiteStartedAt: string,
-  progress: CaseExecutionProgress = { stage: "initializing_case" }
+  progress: CaseExecutionProgress = { stage: "initializing_case", resultPersisted: false, scored: false }
 ) {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   await rm(caseDir, { recursive: true, force: true }).catch(() => undefined);
@@ -1852,6 +2180,7 @@ async function runCase(
   let retriesRequired = 0;
   let unexpectedPageSwitches = 0;
   let transitionsAttempted = 0;
+  let screenshotCaptureAttempts = 0;
 
   const context = await getOrCreateBrowserContext();
   progress.stage = "starting_trace_capture";
@@ -1891,6 +2220,7 @@ async function runCase(
         const pageHeading = await getPageHeading(page);
         const screenshotBefore = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-before.png`);
         progress.stage = `page_${currentPageNumber}_capturing_before_screenshot`;
+        screenshotCaptureAttempts += 1;
         if (await captureBenchmarkScreenshot(page, screenshotBefore, warnings)) {
           screenshotPaths.push(screenshotBefore);
         }
@@ -1954,6 +2284,7 @@ async function runCase(
 
         const screenshotAfter = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-after.png`);
         progress.stage = `page_${currentPageNumber}_capturing_after_screenshot`;
+        screenshotCaptureAttempts += 1;
         if (await captureBenchmarkScreenshot(page, screenshotAfter, warnings)) {
           screenshotPaths.push(screenshotAfter);
         }
@@ -1973,6 +2304,7 @@ async function runCase(
       }
 
       progress.stage = "computing_case_metrics";
+      progress.scored = true;
       const metrics = metricsFromInventory(allFieldRecords);
       if (finalStatus === "completed" && metrics.answerableCount === 0) {
         finalStatus = "not_scorable";
@@ -1983,7 +2315,7 @@ async function runCase(
       }
 
       progress.stage = "writing_case_artifacts";
-      const result = {
+      let result = {
         ...buildCaseResultFromProgress({
           testCase,
           suiteRunId,
@@ -1998,6 +2330,8 @@ async function runCase(
           unexpectedPageSwitches,
           manualBarriers,
           warnings,
+          lastRecordedStage: progress.stage,
+          artifactCapture: createDefaultArtifactCaptureStatus(screenshotPaths, screenshotCaptureAttempts),
           tracePath,
           screenshotPaths,
           fieldInventoryPath,
@@ -2006,16 +2340,56 @@ async function runCase(
         finalReviewPageReached: actionsTaken.some((entry) => /review/i.test(entry))
       } satisfies BenchmarkCaseResult;
 
-      await writeFile(fieldInventoryPath, JSON.stringify(stageResults, null, 2), "utf8");
-      await writeFile(reportPath, JSON.stringify(result, null, 2), "utf8");
-      await writeFile(path.join(caseDir, "console-errors.log"), consoleErrors.join("\n"), "utf8");
-      await writeFile(path.join(caseDir, "page-errors.json"), JSON.stringify(pageErrors, null, 2), "utf8");
-      await writeFile(path.join(caseDir, "failed-requests.json"), JSON.stringify(failedRequests, null, 2), "utf8");
+      result = await persistCaseArtifacts(progress, result, stageResults, consoleErrors, pageErrors, failedRequests);
+      progress.resultPersisted = result.artifactCapture.reportPersisted && result.artifactCapture.fieldInventoryPersisted;
 
       await updateApplicationSession(session.id, (current) => ({
         ...current,
         notes: `${current.notes}\nBenchmark run completed ${nowStamp()}`
       })).catch(() => undefined);
+
+      result = await finalizeCaseCleanup(progress, context, session.id, result);
+      const finalReportWrite = await runBoundedOperation(progress, "writing_final_case_report", FINAL_REPORT_REWRITE_TIMEOUT_MS, () =>
+        writeFile(reportPath, JSON.stringify(result, null, 2), "utf8")
+      );
+      if (finalReportWrite.status !== "completed") {
+        const cleanupWarning = buildOperationWarning(
+          "Cleanup issue during",
+          "writing_final_case_report",
+          finalReportWrite.status,
+          finalReportWrite.detail
+        );
+        if (cleanupWarning) {
+          result = {
+            ...result,
+            lastRecordedStage: "writing_final_case_report",
+            cleanupWarnings: Array.from(new Set([...result.cleanupWarnings, cleanupWarning])),
+            warnings: Array.from(new Set([...result.warnings, cleanupWarning])),
+            cleanupOperations: [
+              ...result.cleanupOperations,
+              {
+                step: "writing_final_case_report",
+                status: finalReportWrite.status,
+                durationMs: finalReportWrite.durationMs,
+                detail: finalReportWrite.detail
+              }
+            ]
+          };
+        }
+      } else {
+        result = {
+          ...result,
+          cleanupOperations: [
+            ...result.cleanupOperations,
+            {
+              step: "writing_final_case_report",
+              status: "completed",
+              durationMs: finalReportWrite.durationMs,
+              detail: finalReportWrite.detail
+            }
+          ]
+        };
+      }
 
       progress.stage = "case_completed";
       return result;
@@ -2028,14 +2402,10 @@ async function runCase(
       finalStatus = "failed_runtime";
       manualBarriers.push(failureMessage);
     }
-  } finally {
-    progress.stage = "closing_trace_and_browser";
-    await context.tracing.stop({ path: tracePath }).catch(() => undefined);
-    await closeSessionPage(session.id).catch(() => undefined);
   }
 
   progress.stage = "writing_fallback_case_artifacts";
-  const fallbackResult = buildCaseResultFromProgress({
+  let fallbackResult = buildCaseResultFromProgress({
     testCase,
     suiteRunId,
     suiteStartedAt,
@@ -2049,14 +2419,58 @@ async function runCase(
     unexpectedPageSwitches,
     manualBarriers,
     warnings,
+    lastRecordedStage: progress.stage,
+    artifactCapture: createDefaultArtifactCaptureStatus(screenshotPaths, screenshotCaptureAttempts),
     tracePath,
     screenshotPaths,
     fieldInventoryPath,
     reportPath
   });
 
-  await writeFile(fieldInventoryPath, JSON.stringify(stageResults, null, 2), "utf8").catch(() => undefined);
-  await writeFile(reportPath, JSON.stringify(fallbackResult, null, 2), "utf8").catch(() => undefined);
+  fallbackResult = await persistCaseArtifacts(progress, fallbackResult, stageResults, consoleErrors, pageErrors, failedRequests);
+  progress.resultPersisted = fallbackResult.artifactCapture.reportPersisted && fallbackResult.artifactCapture.fieldInventoryPersisted;
+  fallbackResult = await finalizeCaseCleanup(progress, context, session.id, fallbackResult);
+  const fallbackFinalReportWrite = await runBoundedOperation(progress, "writing_final_case_report", FINAL_REPORT_REWRITE_TIMEOUT_MS, () =>
+    writeFile(reportPath, JSON.stringify(fallbackResult, null, 2), "utf8")
+  );
+  if (fallbackFinalReportWrite.status !== "completed") {
+    const cleanupWarning = buildOperationWarning(
+      "Cleanup issue during",
+      "writing_final_case_report",
+      fallbackFinalReportWrite.status,
+      fallbackFinalReportWrite.detail
+    );
+    if (cleanupWarning) {
+      fallbackResult = {
+        ...fallbackResult,
+        lastRecordedStage: "writing_final_case_report",
+        cleanupWarnings: Array.from(new Set([...fallbackResult.cleanupWarnings, cleanupWarning])),
+        warnings: Array.from(new Set([...fallbackResult.warnings, cleanupWarning])),
+        cleanupOperations: [
+          ...fallbackResult.cleanupOperations,
+          {
+            step: "writing_final_case_report",
+            status: fallbackFinalReportWrite.status,
+            durationMs: fallbackFinalReportWrite.durationMs,
+            detail: fallbackFinalReportWrite.detail
+          }
+        ]
+      };
+    }
+  } else {
+    fallbackResult = {
+      ...fallbackResult,
+      cleanupOperations: [
+        ...fallbackResult.cleanupOperations,
+        {
+          step: "writing_final_case_report",
+          status: "completed",
+          durationMs: fallbackFinalReportWrite.durationMs,
+          detail: fallbackFinalReportWrite.detail
+        }
+      ]
+    };
+  }
   return fallbackResult;
 }
 
@@ -2075,7 +2489,8 @@ function timedOutCaseResult(
   startedAt: string,
   suiteRunId: string,
   suiteStartedAt: string,
-  stage = "unknown_stage"
+  stage = "unknown_stage",
+  scored = false
 ): BenchmarkCaseResult {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   const tracePath = path.join(TRACE_DIR, `${testCase.id}.zip`);
@@ -2160,6 +2575,7 @@ function timedOutCaseResult(
     },
     manualBarriers: [formatTimeoutBarrier(startedAt, stage)],
     warnings: [formatTimeoutWarning(stage)],
+    cleanupWarnings: isCleanupStage(stage) ? [formatCleanupWarning(stage, scored)] : [],
     failureCategories: {
       FIELD_NOT_DETECTED: 0,
       LABEL_ASSOCIATION_FAILED: 0,
@@ -2177,6 +2593,19 @@ function timedOutCaseResult(
       INTENTIONALLY_UNRESOLVED: 0
     },
     stageResults: [],
+    lastRecordedStage: stage,
+    cleanupOperations: isCleanupStage(stage)
+      ? [
+          {
+            step: stage,
+            status: "timed_out",
+            durationMs: 0,
+            detail: formatCleanupWarning(stage, scored)
+          }
+        ]
+      : [],
+    artifactCapture: createDefaultArtifactCaptureStatus([], 0),
+    browserCleanup: createDefaultBrowserCleanupStatus(),
     tracePath,
     screenshotPaths: [],
     fieldInventoryPath,
@@ -2191,14 +2620,15 @@ function mergeTimedOutCaseResult(
   suiteRunId: string,
   suiteStartedAt: string,
   partial: BenchmarkCaseResult | null,
-  stage = "unknown_stage"
+  stage = "unknown_stage",
+  scored = false
 ): BenchmarkCaseResult {
   if (!partial) {
-    return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, stage);
+    return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, stage, scored);
   }
 
-  if (partial.status === "completed" || partial.status === "manual_barrier" || partial.status === "site_unavailable" || partial.status === "not_scorable") {
-    return partial;
+  if (partial.status !== "timeout") {
+    return isCleanupStage(stage) ? appendCleanupIssueToResult(partial, stage, formatCleanupWarning(stage, scored)) : partial;
   }
 
   return {
@@ -2207,10 +2637,12 @@ function mergeTimedOutCaseResult(
     suiteRunId,
     suiteStartedAt,
     caseFinishedAt: nowStamp(),
-    manualBarriers: Array.from(
-      new Set([formatTimeoutBarrier(startedAt, partial.warnings[0]?.match(/Last recorded stage:\s(.+?)\.$/i)?.[1] || "unknown_stage"), ...partial.manualBarriers])
-    ),
-    warnings: Array.from(new Set([formatTimeoutWarning(partial.warnings[0]?.match(/Last recorded stage:\s(.+?)\.$/i)?.[1] || "unknown_stage"), ...partial.warnings])),
+    lastRecordedStage: stage,
+    manualBarriers: Array.from(new Set([formatTimeoutBarrier(startedAt, stage), ...partial.manualBarriers])),
+    warnings: Array.from(new Set([formatTimeoutWarning(stage), ...partial.warnings])),
+    cleanupWarnings: isCleanupStage(stage)
+      ? Array.from(new Set([formatCleanupWarning(stage, scored), ...partial.cleanupWarnings]))
+      : partial.cleanupWarnings,
     submitted: false
   };
 }
@@ -2228,7 +2660,9 @@ async function runCaseWithTimeout(
 
   const startedAt = nowStamp();
   const progress: CaseExecutionProgress = {
-    stage: "initializing_case"
+    stage: "initializing_case",
+    resultPersisted: false,
+    scored: false
   };
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -2245,7 +2679,7 @@ async function runCaseWithTimeout(
   })
     .catch((error) => {
     if (timedOut) {
-      return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage);
+      return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage, progress.scored);
     }
     throw error;
   });
@@ -2253,7 +2687,7 @@ async function runCaseWithTimeout(
   const timeoutPromise = new Promise<BenchmarkCaseResult>((resolve) => {
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      resolve(timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage));
+      resolve(timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage, progress.scored));
     }, caseTimeoutMs);
   });
 
@@ -2262,9 +2696,23 @@ async function runCaseWithTimeout(
     return winner;
   }
 
+  if (progress.resultPersisted) {
+    const persistedEarly = await readPersistedCaseReport(
+      timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage, progress.scored).reportPath,
+      suiteRunId
+    );
+    if (persistedEarly && persistedEarly.status !== "timeout") {
+      const recoveredResult = isCleanupStage(progress.stage)
+        ? appendCleanupIssueToResult(persistedEarly, progress.stage, formatCleanupWarning(progress.stage, progress.scored))
+        : persistedEarly;
+      await writeFile(recoveredResult.reportPath, JSON.stringify(recoveredResult, null, 2), "utf8").catch(() => undefined);
+      return recoveredResult;
+    }
+  }
+
   const graceSettled = await Promise.race([
     casePromise.then((result) => ({ settled: true as const, result })).catch(() => ({ settled: true as const, result: null })),
-    new Promise<{ settled: false }>((resolve) => setTimeout(() => resolve({ settled: false }), 15_000))
+    new Promise<{ settled: false }>((resolve) => setTimeout(() => resolve({ settled: false }), 45_000))
   ]);
 
   if (graceSettled.settled && graceSettled.result) {
@@ -2272,11 +2720,15 @@ async function runCaseWithTimeout(
   }
 
   const persistedResult = await readPersistedCaseReport(
-    timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage).reportPath,
+    timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage, progress.scored).reportPath,
     suiteRunId
   );
   if (persistedResult && persistedResult.status !== "timeout") {
-    return persistedResult;
+    const recoveredResult = isCleanupStage(progress.stage)
+      ? appendCleanupIssueToResult(persistedResult, progress.stage, formatCleanupWarning(progress.stage, progress.scored))
+      : persistedResult;
+    await writeFile(recoveredResult.reportPath, JSON.stringify(recoveredResult, null, 2), "utf8").catch(() => undefined);
+    return recoveredResult;
   }
 
   await resetBrowserManagerForTests().catch(() => undefined);
@@ -2287,7 +2739,8 @@ async function runCaseWithTimeout(
     suiteRunId,
     suiteStartedAt,
     persistedResult ?? settledResult,
-    progress.stage
+    progress.stage,
+    progress.scored
   );
   await writeFile(timedOutResult.fieldInventoryPath, JSON.stringify(timedOutResult.stageResults, null, 2), "utf8").catch(() => undefined);
   await writeFile(timedOutResult.reportPath, JSON.stringify(timedOutResult, null, 2), "utf8").catch(() => undefined);
