@@ -19,11 +19,24 @@ import {
   matchWorkAuthorizationCategory
 } from "@/lib/optionMatcher";
 import { isSensitiveIntent } from "@/lib/safety";
+import { normalizeText } from "@/lib/utils";
 import { formatAvailabilityText, formatHourlyRateText, formatSalaryText } from "@/lib/valueFormatter";
 import { AnswerBankItem, AnswerSensitivity, ApplicantProfile, FieldIntent, RawScannedField, ShortAnswerSuggestion } from "@/types";
 
 function combinedQuestion(field: RawScannedField) {
   return [field.label, field.name, field.domId, field.placeholder, field.ariaLabel, field.nearbyText].filter(Boolean).join(" ");
+}
+
+function isLeverCommittedLocationPicker(intent: FieldIntent, field: RawScannedField) {
+  if (!["location", "full_location"].includes(intent)) return false;
+  if (!field.frameUrl?.includes("lever.co")) return false;
+  if (field.controlType && field.controlType !== "text") return false;
+
+  const domId = normalizeText(field.domId || "");
+  const name = normalizeText(field.name || "");
+  const context = normalizeText([field.label, field.nearbyText, field.questionContainerText, field.placeholder].filter(Boolean).join(" "));
+
+  return (domId === "location-input" || name === "location") && /no location found|try entering a different location|loading/.test(context);
 }
 
 function selectSensitivity(intent: FieldIntent, source: string) {
@@ -306,6 +319,20 @@ export function buildAnswerSuggestion({
       sensitivity: "safe" as const,
       matchedOption: matched?.option,
       answerSource: formatted ? ("formatted_profile" as const) : ("unknown" as const),
+      shortAnswer: null
+    };
+  }
+
+  if (isLeverCommittedLocationPicker(intent, field)) {
+    return {
+      suggestedValue: "",
+      confidence: 0.35,
+      reason:
+        "This Lever location picker requires choosing a visible exact match before the value will stick, so ApplyPilot left it for manual review instead of guessing.",
+      autoFillAllowed: false,
+      sensitivity: "review" as const,
+      matchedOption: undefined,
+      answerSource: "unknown" as const,
       shortAnswer: null
     };
   }

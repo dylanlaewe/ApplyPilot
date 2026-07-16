@@ -144,3 +144,56 @@ test("duplicate helper resume upload controls are suppressed when a real resume 
   assert.equal(fields.find((field) => field.intent === "resume_upload")?.label, "Resume");
   assert.equal(fields.find((field) => field.intent === "linkedin")?.label, "LinkedIn URL");
 });
+
+test("required Lever current location picker stays in review instead of attempting an unsafe text fill", () => {
+  const profile = createProfile();
+  const answerBank = createDefaultAnswerBank();
+  const [field] = buildSuggestedFields(
+    [
+      rawField({
+        label: "Current location No location found. Try entering a different locationLoading",
+        nearbyText: "Current location No location found. Try entering a different locationLoading",
+        name: "location",
+        domId: "location-input",
+        type: "text",
+        controlType: "text",
+        selector: "#location-input",
+        frameUrl: "https://jobs.lever.co/example/123/apply",
+        isRequired: true
+      })
+    ],
+    profile,
+    answerBank
+  );
+
+  assert.equal(field.intent, "location");
+  assert.equal(field.status, "needs_review");
+  assert.equal(field.suggestedValue, "");
+  assert.match(field.reason, /left it for manual review/i);
+});
+
+test("optional Lever current location picker is skipped instead of producing a false autofill failure", () => {
+  const profile = createProfile();
+  const answerBank = createDefaultAnswerBank();
+  const [field] = buildSuggestedFields(
+    [
+      rawField({
+        label: "Current location No location found. Try entering a different locationLoading",
+        nearbyText: "Current location No location found. Try entering a different locationLoading",
+        name: "location",
+        domId: "location-input",
+        type: "text",
+        controlType: "text",
+        selector: "#location-input",
+        frameUrl: "https://jobs.lever.co/example/123/apply",
+        isRequired: false
+      })
+    ],
+    profile,
+    answerBank
+  );
+
+  assert.equal(field.intent, "location");
+  assert.equal(field.status, "skipped");
+  assert.equal(field.suggestedValue, "");
+});

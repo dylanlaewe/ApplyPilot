@@ -308,6 +308,21 @@ test("street address fills", () => assert.equal(suggestion("street_address").sug
 test("postal code fills", () => assert.equal(suggestion("postal_code").suggestedValue, "02118"));
 test("location fills from structured city, state, country", () => assert.match(suggestion("location").suggestedValue, /Boston, MA, United States/));
 
+test("lever current location picker is left unresolved instead of attempting unverifiable free text", () => {
+  const result = suggestion("location", createProfile(), {
+    name: "location",
+    domId: "location-input",
+    controlType: "text",
+    frameUrl: "https://jobs.lever.co/example/123/apply",
+    nearbyText: "Current location No location found. Try entering a different locationLoading"
+  });
+
+  assert.equal(result.suggestedValue, "");
+  assert.equal(result.answerSource, "unknown");
+  assert.equal(result.autoFillAllowed, false);
+  assert.match(result.reason, /lever location picker requires choosing a visible exact match/i);
+});
+
 test("state dropdown fills", () => {
   const result = suggestion("state", createProfile(), { type: "select-one", selectOptions: ["MA", "NY"] });
   assert.equal(result.suggestedValue, "MA");
