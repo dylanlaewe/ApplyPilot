@@ -107,3 +107,26 @@ test("greenhouse authorization comboboxes are classified for search-style contro
   assert.equal(sponsorship.intent, "sponsorship");
   assert.ok(sponsorship.confidence >= 0.9);
 });
+
+test("greenhouse EEOC survey preambles are not misclassified as state fields", () => {
+  const field: RawScannedField = {
+    label:
+      "Code for America takes transparency and fairness very seriously, and is taking steps to improve our hiring process to ensure it is fair for everyone. In order to achieve this goal and comply with federal and state Equal Employment Opportunity laws, we ask all candidates to complete the voluntary self-identification survey below",
+    name: "question_eeoc_intro",
+    domId: "question_eeoc_intro",
+    type: "search",
+    selector: "#question_eeoc_intro",
+    detectedValue: "",
+    controlType: "aria_combobox",
+    role: "combobox",
+    nearbyText:
+      "Code for America takes transparency and fairness very seriously, and is taking steps to improve our hiring process to ensure it is fair for everyone. In order to achieve this goal and comply with federal and state Equal Employment Opportunity laws, we ask all candidates to complete the voluntary self-identification survey below",
+    isRequired: false,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "unknown");
+  assert.match(result.reason, /demographic|eeoc survey preamble/i);
+});

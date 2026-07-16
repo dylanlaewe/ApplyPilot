@@ -138,6 +138,16 @@ function looksLikeEducationLevelOptions(options: string[]) {
   return matches.length >= 3;
 }
 
+function looksLikeDemographicSurveyPreamble(text: string) {
+  return (
+    /equal employment opportunity/.test(text) ||
+    /voluntary self-identification/.test(text) ||
+    /self-identification survey/.test(text) ||
+    /comply with federal and state/.test(text) ||
+    (/fairness/.test(text) && /hiring process/.test(text) && /survey below/.test(text))
+  );
+}
+
 export function detectQuestionIntent(field: RawScannedField) {
   const meta = inferFieldMetadata(field);
   const label = meta.label;
@@ -175,6 +185,15 @@ export function detectQuestionIntent(field: RawScannedField) {
       intent: "education_highest_completed" as const,
       confidence: 0.9,
       reason: "Visible dropdown options look like education levels rather than school names.",
+      questionText: combined
+    };
+  }
+
+  if (looksLikeDemographicSurveyPreamble(combined)) {
+    return {
+      intent: "unknown" as const,
+      confidence: 0.1,
+      reason: "This looks like a demographic or EEOC survey preamble rather than a concrete answerable field.",
       questionText: combined
     };
   }
