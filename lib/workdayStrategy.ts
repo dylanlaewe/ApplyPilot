@@ -2,7 +2,7 @@ import type { Frame, Page } from "playwright";
 
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
-import { recordApplicationTransitionEvent } from "@/lib/applicationTransitionCoordinator";
+import { getApplicationTransitionDiagnostics, recordApplicationTransitionEvent } from "@/lib/applicationTransitionCoordinator";
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
@@ -23,6 +23,7 @@ import {
   summarizeWorkdayPassResult
 } from "@/lib/workdaySafeMode";
 import { ApplicationSession, AuditLogEntry, DetectedField } from "@/types";
+import { detectWorkdayBarrier, prepareWorkdayAccountAssistFields } from "@/lib/workdayBarrier";
 
 type PreparedWorkdayWaitingState = {
   runtime: Awaited<ReturnType<typeof launchBrowserSession>>;
@@ -36,6 +37,10 @@ type PreparedWorkdaySafeState = {
   pageIdentity: string;
   safeFields: DetectedField[];
   plan: ReturnType<typeof buildWorkdayExecutionPlan>;
+  mode: "application_form" | "account_assist";
+  barrierKind: string;
+  tenant: string;
+  resumedAfterBarrier: boolean;
 };
 
 function resolveFieldFrame(page: Page, field: Pick<DetectedField, "frameUrl" | "frameName">): Frame {
@@ -162,7 +167,71 @@ async function prepareWorkdaySafeFields(
   recordDiagnostic?.("page_resolved", runtime.page.url());
 
   const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
+  const workdayBarrier =
+    prepared.workdayBarrier ?? (await detectWorkdayBarrier(runtime.page, { captchaDetection: prepared.captchaDetection }));
+  const state = resumeWorkdaySafeMode(sessionId);
+  const resumedAfterBarrier = workdayBarrier.formReached && Boolean(state.lastBarrierKind && state.lastBarrierKind !== "form_reached");
+  state.lastBarrierKind = workdayBarrier.kind;
+  recordDiagnostic?.("barrier_kind", workdayBarrier.kind);
+  await writeWorkdayOverlayDiagnostic({
+    sessionId,
+    eventLog: getApplicationTransitionDiagnostics(sessionId).eventLog.map((item) => ({ event: item.event, detail: item.detail })),
+    safeFieldsPlanned: 0,
+    committed: 0,
+    unresolved: 0,
+    barrierType: workdayBarrier.kind,
+    tenant: workdayBarrier.tenant,
+    formReached: workdayBarrier.formReached,
+    resumedAfterBarrier,
+    detectedAt: new Date().toISOString()
+  }).catch(() => undefined);
+
   if (prepared.waiting) {
+    if (workdayBarrier.kind === "account_creation_required") {
+      const accountFields = prepareWorkdayAccountAssistFields(prepared.detectedFields);
+      const assistFields = accountFields.filter(
+        (field) =>
+          field.autoFillAllowed &&
+          field.suggestedValue.trim() &&
+          field.type !== "password" &&
+          !field.isDisabled
+      );
+      if (assistFields.length > 0) {
+        const pageIdentity = await readWorkdayPageIdentity(runtime.page);
+        const metrics = await readWorkdayFieldMetrics(runtime.page, assistFields);
+        const plan = buildWorkdayExecutionPlan(assistFields, metrics);
+        await updateApplicationSession(sessionId, (current) => ({
+          ...current,
+          atsProvider: "workday",
+          status: "waiting_for_user",
+          statusMessage: workdayBarrier.message,
+          nextAction: workdayBarrier.nextAction,
+          detectedFields: accountFields,
+          warnings: prepared.pageSummary.warnings,
+          finalSubmitButtons: prepared.pageSummary.finalSubmitButtons,
+          captchaDetection: prepared.captchaDetection,
+          currentPageUrl: runtime.page.url(),
+          browserStatus: "open",
+          jobContext: prepared.jobContext,
+          generatorHealth: prepared.generatorHealth
+        }));
+        return {
+          runtime,
+          prepared: {
+            ...prepared,
+            detectedFields: accountFields
+          },
+          pageIdentity: pageIdentity.identity,
+          safeFields: accountFields,
+          plan,
+          mode: "account_assist",
+          barrierKind: workdayBarrier.kind,
+          tenant: workdayBarrier.tenant,
+          resumedAfterBarrier
+        };
+      }
+    }
+
     return {
       runtime,
       prepared,
@@ -178,7 +247,6 @@ async function prepareWorkdaySafeFields(
     };
   }
 
-  const state = resumeWorkdaySafeMode(sessionId);
   const pageIdentity = await readWorkdayPageIdentity(runtime.page);
   const safeFields = applyWorkdaySafeModeRules(prepared.detectedFields, {
     verifiedFieldKeys: state.pageIdentity === pageIdentity.identity ? state.verifiedFieldKeys : new Set<string>()
@@ -210,7 +278,11 @@ async function prepareWorkdaySafeFields(
     prepared,
     pageIdentity: pageIdentity.identity,
     safeFields,
-    plan
+    plan,
+    mode: "application_form",
+    barrierKind: workdayBarrier.kind,
+    tenant: workdayBarrier.tenant,
+    resumedAfterBarrier
   };
 }
 
@@ -253,8 +325,11 @@ export async function runWorkdaySafePass(
     await updateApplicationSession(sessionId, (current) => ({
       ...current,
       status: "filling",
-      statusMessage: "Filling the safe basics.",
-      nextAction: "ApplyPilot is doing one careful Workday pass from top to bottom."
+      statusMessage: prepared.mode === "account_assist" ? "Filling safe account fields." : "Filling the safe basics.",
+      nextAction:
+        prepared.mode === "account_assist"
+          ? "ApplyPilot is filling only safe name and email fields on this Workday account page."
+          : "ApplyPilot is doing one careful Workday pass from top to bottom."
     }));
 
     const auditEntries: AuditLogEntry[] = [];
@@ -337,12 +412,22 @@ export async function runWorkdaySafePass(
     updated = await updateApplicationSession(sessionId, (current) => ({
       ...current,
       atsProvider: "workday",
-      status: current.detectedFields.some((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
-        ? "needs_review"
-        : "ready_for_submission",
+      status:
+        prepared.mode === "account_assist"
+          ? "waiting_for_user"
+          : current.detectedFields.some((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
+            ? "needs_review"
+            : "ready_for_submission",
       statusMessage:
-        current.fieldsFilledAndVerified > 0 ? "Finished a controlled Workday pass." : "Nothing safe was filled on this page.",
-      nextAction: "Review the remaining fields in the browser. ApplyPilot did not select any uncertain answers.",
+        prepared.mode === "account_assist"
+          ? "Create account required."
+          : current.fieldsFilledAndVerified > 0
+            ? "Finished a controlled Workday pass."
+            : "Nothing safe was filled on this page.",
+      nextAction:
+        prepared.mode === "account_assist"
+          ? "Finish the password, verification, and any legal steps in the browser. ApplyPilot will continue after the application form opens."
+          : "Review the remaining fields in the browser. ApplyPilot did not select any uncertain answers.",
       captchaDetection: prepared.prepared.captchaDetection
     }));
 
@@ -357,6 +442,18 @@ export async function runWorkdaySafePass(
     const unresolved = prepared.safeFields.filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status)).length;
     recordDiagnostic?.("committed_count", String(committed));
     recordDiagnostic?.("unresolved_count", String(unresolved));
+    await writeWorkdayOverlayDiagnostic({
+      sessionId,
+      eventLog: getApplicationTransitionDiagnostics(sessionId).eventLog.map((item) => ({ event: item.event, detail: item.detail })),
+      safeFieldsPlanned: prepared.plan.length,
+      committed,
+      unresolved,
+      barrierType: prepared.barrierKind,
+      tenant: prepared.tenant,
+      formReached: prepared.mode === "application_form",
+      resumedAfterBarrier: prepared.resumedAfterBarrier,
+      detectedAt: new Date().toISOString()
+    }).catch(() => undefined);
 
     return updated;
   } catch (error) {

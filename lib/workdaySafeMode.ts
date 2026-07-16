@@ -7,6 +7,7 @@ type WorkdaySafeModeState = {
   stopped: boolean;
   pageIdentity: string;
   verifiedFieldKeys: Set<string>;
+  lastBarrierKind: string;
 };
 
 export type WorkdayPageIdentityParts = {
@@ -140,7 +141,8 @@ function createState(): WorkdaySafeModeState {
     inProgress: false,
     stopped: false,
     pageIdentity: "",
-    verifiedFieldKeys: new Set<string>()
+    verifiedFieldKeys: new Set<string>(),
+    lastBarrierKind: ""
   };
 }
 

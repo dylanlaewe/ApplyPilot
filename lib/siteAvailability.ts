@@ -2,6 +2,7 @@ const UNAVAILABLE_PATTERNS = [
   /job (is )?no longer available/i,
   /this position has been filled/i,
   /page not found/i,
+  /page you are looking for doesn't exist/i,
   /job not found/i,
   /posting closed/i,
   /no longer accepting applications/i,

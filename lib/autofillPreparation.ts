@@ -16,6 +16,7 @@ import { getApplicantProfile } from "@/lib/profile";
 import { getShortAnswerGeneratorRuntimeHealth, summarizeShortAnswerGeneratorHealth } from "@/lib/shortAnswerGenerator";
 import { buildJobContext } from "@/lib/jobContext";
 import { ApplicationSession, CaptchaDetectionStatus } from "@/types";
+import { detectWorkdayBarrier } from "@/lib/workdayBarrier";
 
 export async function syncMetadata(sessionId: string, url?: string, navigate = false) {
   const session = await getApplicationSession(sessionId);
@@ -85,13 +86,23 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
     detectCaptcha(runtimePage),
     detectLoginRequirement(runtimePage)
   ]);
+  const workdayBarrier =
+    refreshedSession.atsProvider === "workday"
+      ? await detectWorkdayBarrier(runtimePage, { captchaDetection })
+      : null;
 
-  const waiting = waitingState({
-    pageWarnings: pageSummary.warnings,
-    hasFields: rawFields.length > 0,
-    loginRequired,
-    captchaStatus: captchaDetection.status
-  });
+  const waiting =
+    workdayBarrier && !workdayBarrier.formReached
+      ? {
+          statusMessage: workdayBarrier.message,
+          nextAction: workdayBarrier.nextAction
+        }
+      : waitingState({
+          pageWarnings: pageSummary.warnings,
+          hasFields: rawFields.length > 0,
+          loginRequired,
+          captchaStatus: captchaDetection.status
+        });
 
   const jobContext = buildJobContext({
     company: refreshedSession.company,
@@ -116,6 +127,7 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
     refreshedSession,
     pageSummary,
     captchaDetection,
+    workdayBarrier,
     waiting,
     jobContext,
     detectedFields,

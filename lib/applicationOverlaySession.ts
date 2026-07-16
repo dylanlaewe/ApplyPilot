@@ -10,6 +10,7 @@ import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/pla
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 import { stopApplicationRuntime } from "@/lib/applicationRuntimeState";
+import { getWorkdayBarrierStatusLabel } from "@/lib/workdayBarrier";
 import { ApplicationSession, DetectedField } from "@/types";
 
 function unresolvedFields(fields: DetectedField[]) {
@@ -27,7 +28,18 @@ function unresolvedFields(fields: DetectedField[]) {
 }
 
 function overlayStatusLabel(session: ApplicationSession) {
-  if (session.status === "waiting_for_user") return "Waiting for the page";
+  if (session.status === "waiting_for_user") {
+    const normalized = session.statusMessage.toLowerCase();
+    if (/login required/.test(normalized)) return getWorkdayBarrierStatusLabel("login_required");
+    if (/create account required/.test(normalized)) return getWorkdayBarrierStatusLabel("account_creation_required");
+    if (/email verification required/.test(normalized)) return getWorkdayBarrierStatusLabel("email_verification_required");
+    if (/captcha required/.test(normalized)) return getWorkdayBarrierStatusLabel("captcha_required");
+    if (/\bmfa required/.test(normalized)) return getWorkdayBarrierStatusLabel("mfa_required");
+    if (/terms acknowledgement required/.test(normalized)) return getWorkdayBarrierStatusLabel("terms_required");
+    if (/job unavailable/.test(normalized)) return getWorkdayBarrierStatusLabel("site_unavailable");
+    if (/application form detected/.test(normalized)) return getWorkdayBarrierStatusLabel("form_reached");
+    return "Waiting for the page";
+  }
   if (session.status === "scanning") return "Reading page";
   if (session.status === "filling") return "Filling safe fields";
   if (session.status === "verifying") return "Reading page";
@@ -38,6 +50,15 @@ function overlayStatusLabel(session: ApplicationSession) {
 }
 
 function summarizeSession(session: ApplicationSession, options?: { resumeUploaded?: boolean }) {
+  if (session.status === "waiting_for_user") {
+    return {
+      ok: true,
+      status: overlayStatusLabel(session),
+      message: session.nextAction || session.statusMessage || "ApplyPilot is waiting for the next safe step on this page.",
+      unresolved: []
+    } satisfies ApplicationOverlayActionResult;
+  }
+
   const summaryParts = [
     `${session.fieldsFilledAndVerified} field${session.fieldsFilledAndVerified === 1 ? "" : "s"} completed`,
     `${session.fieldsUnresolved} need${session.fieldsUnresolved === 1 ? "s" : ""} your input`
@@ -76,7 +97,12 @@ async function reviewCurrentPage(sessionId: string, session: ApplicationSession,
   if (prepared.waiting) {
     return {
       ok: true,
-      status: prepared.waiting.statusMessage.includes("Sign-in") ? "Login required" : "Waiting for the page",
+      status:
+        prepared.workdayBarrier && !prepared.workdayBarrier.formReached
+          ? getWorkdayBarrierStatusLabel(prepared.workdayBarrier.kind)
+          : prepared.waiting.statusMessage.includes("Sign-in")
+            ? "Login required"
+            : "Waiting for the page",
       message: prepared.waiting.nextAction,
       unresolved: []
     } satisfies ApplicationOverlayActionResult;
@@ -106,7 +132,10 @@ async function uploadResumeForCurrentPage(sessionId: string, session: Applicatio
   if (prepared.waiting) {
     return {
       ok: true,
-      status: "Waiting for the page",
+      status:
+        prepared.workdayBarrier && !prepared.workdayBarrier.formReached
+          ? getWorkdayBarrierStatusLabel(prepared.workdayBarrier.kind)
+          : "Waiting for the page",
       message: prepared.waiting.nextAction,
       unresolved: []
     } satisfies ApplicationOverlayActionResult;

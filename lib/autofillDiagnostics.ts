@@ -23,6 +23,11 @@ type WorkdayOverlaySummary = {
   safeFieldsPlanned: number;
   committed: number;
   unresolved: number;
+  barrierType?: string;
+  tenant?: string;
+  formReached?: boolean;
+  resumedAfterBarrier?: boolean;
+  detectedAt?: string;
   failureReason?: string;
 };
 

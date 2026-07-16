@@ -14,6 +14,7 @@ import { prepareLogicalFields, type LogicalFieldPreparationStats } from "@/lib/f
 import { buildSuggestedFields } from "@/lib/fieldMapping";
 import { extractJobMetadata } from "@/lib/jobMetadata";
 import {
+  detectAtsProvider,
   detectCaptcha,
   detectLoginRequirement,
   launchBrowserSession,
@@ -24,6 +25,7 @@ import { createDefaultProfile, normalizeProfile, saveApplicantProfile } from "@/
 import { runAutofillPass } from "@/lib/quickApply";
 import { isFinalSubmitLabel } from "@/lib/safety";
 import { detectUnavailableText } from "@/lib/siteAvailability";
+import { detectWorkdayBarrier } from "@/lib/workdayBarrier";
 import { normalizeText } from "@/lib/utils";
 import { AnswerBankItem, ApplicantProfile, ApplicationSession, DetectedField, RawScannedField } from "@/types";
 
@@ -1650,6 +1652,19 @@ async function preparePageForBenchmark(
     if (unavailable) {
       manualBarriers.push("Job posting appears unavailable.");
       return { status: "site_unavailable" as const };
+    }
+
+    if (detectAtsProvider(page.url()) === "workday") {
+      const captcha = await detectCaptcha(page);
+      const workdayBarrier = await detectWorkdayBarrier(page, { captchaDetection: captcha });
+      if (workdayBarrier.kind === "site_unavailable") {
+        manualBarriers.push("Workday redirected to a job-search or unavailable page instead of an application form.");
+        return { status: "site_unavailable" as const };
+      }
+      if (!workdayBarrier.formReached) {
+        manualBarriers.push(workdayBarrier.nextAction);
+        return { status: "manual_barrier" as const };
+      }
     }
 
     const loginRequired = await detectLoginRequirement(page);
