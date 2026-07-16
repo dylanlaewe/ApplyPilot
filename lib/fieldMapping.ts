@@ -10,6 +10,23 @@ function toConfidenceLevel(confidence: number): ConfidenceLevel {
   return "needs_review";
 }
 
+function shouldTrustExplicitSensitiveOptionMatch(field: RawScannedField, answer: {
+  sensitivity: "safe" | "review" | "sensitive";
+  answerSource: string;
+  autoFillAllowed: boolean;
+  matchedOption?: string;
+  suggestedValue: string;
+}) {
+  return (
+    answer.sensitivity === "sensitive" &&
+    answer.answerSource === "explicit_profile" &&
+    answer.autoFillAllowed &&
+    Boolean(answer.matchedOption) &&
+    Boolean(answer.suggestedValue.trim()) &&
+    ["checkbox", "radio", "select-one", "select-multiple"].includes(field.type)
+  );
+}
+
 function suppressDuplicateResumeHelpers(fields: DetectedField[]) {
   const resumeFields = fields.filter((field) => field.intent === "resume_upload");
   if (resumeFields.length <= 1) {
@@ -108,7 +125,11 @@ export function suggestFieldValue(
     reason = answer.reason;
   }
 
-  const confidence = answer.shortAnswer ? answer.confidence : Math.min(intentResult.confidence, answer.confidence);
+  const confidence = answer.shortAnswer
+    ? answer.confidence
+    : shouldTrustExplicitSensitiveOptionMatch(rawField, answer)
+      ? answer.confidence
+      : Math.min(intentResult.confidence, answer.confidence);
 
   return {
     id: crypto.randomUUID(),

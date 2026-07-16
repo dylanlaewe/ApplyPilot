@@ -197,3 +197,40 @@ test("optional Lever current location picker is skipped instead of producing a f
   assert.equal(field.status, "skipped");
   assert.equal(field.suggestedValue, "");
 });
+
+test("explicit EEOC race checkbox groups keep the exact matched option confidence for autofill review", () => {
+  const profile = createProfile();
+  profile.eeocDefaults.raceEthnicity.values = ["Black or African American"];
+  const answerBank = createDefaultAnswerBank();
+  const [field] = buildSuggestedFields(
+    [
+      rawField({
+        label: "White / Caucasian",
+        nearbyText: "White / Caucasian",
+        questionContainerText:
+          "What is your race/ethnicity? White / Caucasian Hispanic or Latinx Black or African American Asian Prefer not to answer",
+        name: "race_ethnicity",
+        type: "checkbox",
+        controlType: "checkbox",
+        selector: "#race_white",
+        selectOptions: [
+          "White / Caucasian",
+          "Hispanic or Latinx",
+          "Black or African American",
+          "Asian",
+          "Prefer not to answer"
+        ]
+      })
+    ],
+    profile,
+    answerBank
+  );
+
+  assert.equal(field.intent, "eeoc_race");
+  assert.equal(field.sensitivity, "sensitive");
+  assert.equal(field.autoFillAllowed, true);
+  assert.equal(field.matchedOption, "Black or African American");
+  assert.equal(field.suggestedValue, "Black or African American");
+  assert.ok(field.confidence >= 0.95);
+  assert.equal(field.status, "needs_review");
+});
