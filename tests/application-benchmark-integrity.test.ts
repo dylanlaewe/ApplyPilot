@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCaseSelectionCounts,
   buildCaseResultFromProgress,
   buildOverallSummary,
+  loadCasesFromArgs,
   mergeTimedOutCaseResult,
   resultBelongsToSuiteRun,
   shouldPreserveCompletedStatusAfterLateFailure,
@@ -140,6 +142,60 @@ test("buildOverallSummary marks transition continuity as not measured when no li
   assert.equal(transitionMetric.denominator, 0);
   assert.equal(transitionMetric.rate, 0);
   assert.equal(transitionMetric.notMeasured, true);
+});
+
+test("loadCasesFromArgs excludes disabled Workday cases from broad ATS runs but keeps explicit case ids", () => {
+  const workdayCases = loadCasesFromArgs({
+    ats: "workday",
+    caseIds: [],
+    fromCase: "",
+    phase: null,
+    failedOnly: false,
+    resume: false,
+    skipCases: [],
+    caseTimeoutMs: 0
+  });
+
+  assert.ok(workdayCases.length > 0);
+  assert.ok(workdayCases.every((testCase) => testCase.ats === "workday"));
+  assert.ok(workdayCases.every((testCase) => testCase.active !== false));
+  assert.ok(workdayCases.every((testCase) => !testCase.availabilityRegression));
+  assert.ok(workdayCases.some((testCase) => testCase.id === "broadridge-workday"));
+  assert.ok(workdayCases.every((testCase) => testCase.id !== "brown-workday"));
+
+  const explicitDisabled = loadCasesFromArgs({
+    ats: "workday",
+    caseIds: ["brown-workday"],
+    fromCase: "",
+    phase: null,
+    failedOnly: false,
+    resume: false,
+    skipCases: [],
+    caseTimeoutMs: 0
+  });
+
+  assert.deepEqual(explicitDisabled.map((testCase) => testCase.id), ["brown-workday"]);
+  assert.equal(explicitDisabled[0]?.active, false);
+});
+
+test("summary counts separate active and disabled regression cases", () => {
+  const counts = buildCaseSelectionCounts(["broadridge-workday", "brown-workday", "redhat-workday"]);
+  assert.deepEqual(counts, {
+    activeCases: 1,
+    disabledCases: 2,
+    disabledRegressionCases: 2
+  });
+
+  const summary = buildOverallSummary([
+    createResult({ id: "broadridge-workday", ats: "workday", status: "manual_barrier" }),
+    createResult({ id: "brown-workday", ats: "workday", status: "site_unavailable" })
+  ]) as Record<string, unknown>;
+
+  assert.equal(summary.activeCases, 1);
+  assert.equal(summary.disabledCases, 1);
+  assert.equal(summary.disabledRegressionCases, 1);
+  assert.equal(summary.manualBarrier, 1);
+  assert.equal(summary.siteUnavailable, 1);
 });
 
 test("mergeTimedOutCaseResult preserves a persisted completed case instead of downgrading it to timeout", () => {

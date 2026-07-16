@@ -337,6 +337,12 @@ type BenchmarkSummary = {
   noFinalSubmissions: boolean;
 };
 
+type CaseSelectionCounts = {
+  activeCases: number;
+  disabledCases: number;
+  disabledRegressionCases: number;
+};
+
 type SavedState = {
   profileRaw: string | null;
   answerBankRaw: string | null;
@@ -1007,7 +1013,7 @@ async function restoreCurrentState(state: SavedState) {
 function loadCasesFromArgs(args: ReturnType<typeof parseArgs>) {
   let selected = CASES.slice();
 
-  if (!args.caseIds.length && !args.ats && args.phase === null && !args.failedOnly && !args.fromCase && !args.resume && !args.skipCases.length) {
+  if (!args.caseIds.length) {
     selected = selected.filter((testCase) => testCase.active !== false && !testCase.availabilityRegression);
   }
 
@@ -1043,6 +1049,36 @@ function loadCasesFromArgs(args: ReturnType<typeof parseArgs>) {
   }
 
   return selected;
+}
+
+function getBenchmarkCaseDefinition(caseId: string) {
+  return CASES.find((testCase) => testCase.id === caseId) ?? null;
+}
+
+function buildCaseSelectionCounts(caseIds: string[]): CaseSelectionCounts {
+  return caseIds.reduce(
+    (counts, caseId) => {
+      const definition = getBenchmarkCaseDefinition(caseId);
+      if (!definition) return counts;
+
+      if (definition.active === false) {
+        counts.disabledCases += 1;
+      } else {
+        counts.activeCases += 1;
+      }
+
+      if (definition.availabilityRegression) {
+        counts.disabledRegressionCases += 1;
+      }
+
+      return counts;
+    },
+    {
+      activeCases: 0,
+      disabledCases: 0,
+      disabledRegressionCases: 0
+    } satisfies CaseSelectionCounts
+  );
 }
 
 function metadataMatches(expected: string, actual: string) {
@@ -2796,6 +2832,7 @@ function summarizeByAts(results: BenchmarkCaseResult[]) {
 
     summary[ats] = {
       cases: atsResults.length,
+      ...buildCaseSelectionCounts(atsResults.map((result) => result.id)),
       completed: atsResults.filter((result) => result.status === "completed").length,
       manualBarrier: atsResults.filter((result) => result.status === "manual_barrier").length,
       siteUnavailable: atsResults.filter((result) => result.status === "site_unavailable").length,
@@ -2898,6 +2935,7 @@ function buildOverallSummary(results: BenchmarkCaseResult[]) {
 
   return {
     cases: results.length,
+    ...buildCaseSelectionCounts(results.map((result) => result.id)),
     completed: results.filter((result) => result.status === "completed").length,
     manualBarrier: results.filter((result) => result.status === "manual_barrier").length,
     siteUnavailable: results.filter((result) => result.status === "site_unavailable").length,
@@ -3443,9 +3481,11 @@ if (isDirectRun) {
 }
 
 export {
+  buildCaseSelectionCounts,
   buildCaseResultFromProgress,
   buildMetric,
   buildOverallSummary,
+  loadCasesFromArgs,
   mergeTimedOutCaseResult,
   resultBelongsToSuiteRun,
   shouldPreserveCompletedStatusAfterLateFailure,
