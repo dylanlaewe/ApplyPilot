@@ -265,6 +265,18 @@ type BenchmarkCaseResult = {
   submitted: boolean;
 };
 
+type CaseExecutionProgress = {
+  stage: string;
+};
+
+function formatTimeoutBarrier(startedAt: string, stage: string) {
+  return `Case timed out after the configured limit during ${stage}. Started ${startedAt}.`;
+}
+
+function formatTimeoutWarning(stage: string) {
+  return `Timed out before the benchmark case completed. Last recorded stage: ${stage}.`;
+}
+
 type BenchmarkSummary = {
   runId: string;
   startedAt: string;
@@ -1648,7 +1660,151 @@ function manualEffortFromInventory(records: BenchmarkFieldRecord[], retriesRequi
   };
 }
 
-async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, suiteRunId: string, suiteStartedAt: string) {
+function shouldPreserveCompletedStatusAfterLateFailure(
+  currentStatus: BenchmarkCaseStatus,
+  failureMessage: string,
+  records: BenchmarkFieldRecord[]
+) {
+  const normalizedFailure = normalizeText(failureMessage);
+  const lateArtifactFailure =
+    /target page, context or browser has been closed|page has been closed|browser has been closed|context has been closed/i.test(
+      normalizedFailure
+    );
+  const answerableRecords = records.filter((record) => record.answerable);
+  const fullyVerified = answerableRecords.length > 0 && answerableRecords.every((record) => record.verified);
+
+  return currentStatus === "completed" && lateArtifactFailure && fullyVerified;
+}
+
+function buildCaseResultFromProgress({
+  testCase,
+  suiteRunId,
+  suiteStartedAt,
+  caseStartedAt,
+  finalStatus,
+  metadata,
+  stageResults,
+  allFieldRecords,
+  transitionsAttempted,
+  retriesRequired,
+  unexpectedPageSwitches,
+  manualBarriers,
+  warnings,
+  tracePath,
+  screenshotPaths,
+  fieldInventoryPath,
+  reportPath
+}: {
+  testCase: BenchmarkCase;
+  suiteRunId: string;
+  suiteStartedAt: string;
+  caseStartedAt: string;
+  finalStatus: BenchmarkCaseStatus;
+  metadata: { company: string; roleTitle: string; source: string };
+  stageResults: StageResult[];
+  allFieldRecords: BenchmarkFieldRecord[];
+  transitionsAttempted: number;
+  retriesRequired: number;
+  unexpectedPageSwitches: number;
+  manualBarriers: string[];
+  warnings: string[];
+  tracePath: string;
+  screenshotPaths: string[];
+  fieldInventoryPath: string;
+  reportPath: string;
+}): BenchmarkCaseResult {
+  const metrics = metricsFromInventory(allFieldRecords);
+  const metadataSuccess = metadataMatches(testCase.company, metadata.company) && metadataMatches(testCase.roleTitle, metadata.roleTitle);
+
+  return {
+    suiteRunId,
+    suiteStartedAt,
+    caseStartedAt,
+    caseFinishedAt: nowStamp(),
+    id: testCase.id,
+    ats: testCase.ats,
+    phase: testCase.phase,
+    company: testCase.company,
+    roleTitle: testCase.roleTitle,
+    url: testCase.url,
+    status: finalStatus,
+    metadata: {
+      expectedCompany: testCase.company,
+      expectedRoleTitle: testCase.roleTitle,
+      actualCompany: metadata.company,
+      actualRoleTitle: metadata.roleTitle,
+      success: metadataSuccess,
+      source: metadata.source
+    },
+    pagesReached: stageResults.length,
+    pagesFilled: stageResults.filter((stage) => stage.inventory.some((record) => record.verified)).length,
+    transitionsAttempted,
+    transitionsContinued: Math.min(transitionsAttempted, Math.max(stageResults.length - 1, 0)),
+    finalReviewPageReached: false,
+    rawDomCandidateCount: stageResults.reduce((sum, stage) => sum + stage.initialRawFieldCount, 0),
+    noiseRejectedCount: stageResults.reduce((sum, stage) => sum + stage.noiseRejectedCount, 0),
+    logicalFieldCount: stageResults.reduce((sum, stage) => sum + stage.logicalFieldCount, 0),
+    answerableFieldCount: metrics.answerableCount,
+    intentionallyUnresolvedCount: stageResults.reduce((sum, stage) => sum + stage.intentionallyUnresolvedCount, 0),
+    detectedCount: metrics.detectedCount,
+    attemptedCount: metrics.attemptedCount,
+    verifiedCount: metrics.verifiedCount,
+    safeAnswerableFieldCount: metrics.safeAnswerableCount,
+    safeVerifiedCount: metrics.safeVerifiedCount,
+    safeAnswerCoverage: metrics.safeAnswerCoverage,
+    userExpectedFieldCount: metrics.userExpectedCount,
+    userExpectedVerifiedCount: metrics.userExpectedVerifiedCount,
+    userExpectedCoverage: metrics.userExpectedCoverage,
+    dropdownCount: metrics.dropdownCount,
+    dropdownVerifiedCount: metrics.dropdownVerifiedCount,
+    autocompleteCount: metrics.autocompleteCount,
+    autocompleteVerifiedCount: metrics.autocompleteVerifiedCount,
+    fileUploadCount: metrics.fileUploadCount,
+    fileUploadVerifiedCount: metrics.fileUploadVerifiedCount,
+    fieldDetectionRecall: metrics.fieldDetectionRecall,
+    fillCoverage: metrics.fillCoverage,
+    fillPrecision: metrics.fillPrecision,
+    dropdownSuccess: metrics.dropdownSuccess,
+    autocompleteSuccess: metrics.autocompleteSuccess,
+    fileUploadSuccess: metrics.fileUploadSuccess,
+    severeIncorrectAnswers: metrics.severeIncorrectAnswers,
+    severeFieldFailures: metrics.severeFieldFailures,
+    generatableQuestionCount: metrics.generatableQuestionCount,
+    generatableShortAnswersDetected: metrics.generatableShortAnswersDetected,
+    generatedAnswerCount: metrics.generatedAnswerCount,
+    generatedAnswersInserted: metrics.generatedAnswersInserted,
+    generatedAnswersBrowserVerified: metrics.generatedAnswersBrowserVerified,
+    generatedAnswersPassingQuality: metrics.generatedAnswersPassingQuality,
+    generatedAnswersRejectedForQuality: metrics.generatedAnswersRejectedForQuality,
+    generatableShortAnswersFilled: metrics.generatableShortAnswersFilled,
+    rawShortAnswerCoverage: metrics.rawShortAnswerCoverage,
+    qualityApprovedShortAnswerCoverage: metrics.qualityApprovedShortAnswerCoverage,
+    humanReadyShortAnswerCoverage: metrics.humanReadyShortAnswerCoverage,
+    generatableShortAnswerCoverage: metrics.generatableShortAnswerCoverage,
+    reusableAnswersFilled: metrics.reusableAnswersFilled,
+    missingEvidenceQuestions: metrics.missingEvidenceQuestions,
+    generatedAnswersRequiringCorrection: metrics.generatedAnswersRequiringCorrection,
+    generatedAnswersAcceptedWithoutEdit: metrics.generatedAnswersAcceptedWithoutEdit,
+    manualEffort: manualEffortFromInventory(allFieldRecords, retriesRequired, unexpectedPageSwitches),
+    manualBarriers,
+    warnings: Array.from(new Set(warnings)),
+    failureCategories: summarizeFailureCategories(allFieldRecords),
+    stageResults,
+    tracePath,
+    screenshotPaths,
+    fieldInventoryPath,
+    reportPath,
+    submitted: false
+  };
+}
+
+async function runCase(
+  testCase: BenchmarkCase,
+  fixtures: SyntheticFixtures,
+  suiteRunId: string,
+  suiteStartedAt: string,
+  progress: CaseExecutionProgress = { stage: "initializing_case" }
+) {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   await rm(caseDir, { recursive: true, force: true }).catch(() => undefined);
   await mkdir(caseDir, { recursive: true });
@@ -1693,11 +1849,16 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
     roleTitle: testCase.roleTitle,
     source: "none"
   };
+  let retriesRequired = 0;
+  let unexpectedPageSwitches = 0;
+  let transitionsAttempted = 0;
 
   const context = await getOrCreateBrowserContext();
+  progress.stage = "starting_trace_capture";
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 
   try {
+    progress.stage = "launching_browser_session";
     const runtime = await launchBrowserSession(testCase.url, session.id);
     const page = runtime.page;
     page.on("console", (message) => {
@@ -1715,47 +1876,55 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
       });
     });
 
+    progress.stage = "preflight_page_preparation";
     const preflight = await preparePageForBenchmark(page, manualBarriers, actionsTaken);
     if (preflight.status !== "ready") {
       finalStatus = preflight.status;
     } else {
       let currentPageNumber = 1;
-      let retriesRequired = 0;
-      let unexpectedPageSwitches = 0;
-      let transitionsAttempted = 0;
 
       while (currentPageNumber <= 4) {
+        progress.stage = `page_${currentPageNumber}_waiting_for_readiness`;
         await waitForPageReadiness(page);
         const pageUrl = page.url();
+        progress.stage = `page_${currentPageNumber}_reading_heading`;
         const pageHeading = await getPageHeading(page);
         const screenshotBefore = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-before.png`);
+        progress.stage = `page_${currentPageNumber}_capturing_before_screenshot`;
         if (await captureBenchmarkScreenshot(page, screenshotBefore, warnings)) {
           screenshotPaths.push(screenshotBefore);
         }
 
+        progress.stage = `page_${currentPageNumber}_collecting_inventory`;
         const rawInventory = await collectVisibleFieldInventory(page);
+        progress.stage = `page_${currentPageNumber}_building_expected_fields`;
         const expectedFields = buildSuggestedFields(rawInventory.fields, fixtures.profile, fixtures.answerBank, {
           company: testCase.company,
           roleTitle: testCase.roleTitle,
           source: "application-benchmark",
           notes: ""
         });
+        progress.stage = `page_${currentPageNumber}_extracting_metadata`;
         const extractedMetadata = await extractJobMetadata(page);
         if (extractedMetadata.company || extractedMetadata.roleTitle) {
           metadata = extractedMetadata;
         }
 
+        progress.stage = `page_${currentPageNumber}_autofill_pass_1`;
         let firstPass = await runAutofillPass(session.id);
         let secondPass = firstPass;
         if (shouldRunSecondPass(firstPass)) {
           retriesRequired += 1;
+          progress.stage = `page_${currentPageNumber}_autofill_pass_2`;
           secondPass = await runAutofillPass(session.id);
         }
 
         const mergedDetected = mergeDetectedFields(firstPass.detectedFields, secondPass.detectedFields);
+        progress.stage = `page_${currentPageNumber}_reading_displayed_values`;
         const displayedValues = await readDisplayedValues(page, mergedDetected);
         warnings.push(...secondPass.warnings);
 
+        progress.stage = `page_${currentPageNumber}_building_stage_inventory`;
         const inventory = buildStageInventory({
           testCase,
           pageNumber: currentPageNumber,
@@ -1784,10 +1953,12 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
         allFieldRecords.push(...inventory);
 
         const screenshotAfter = path.join(SCREENSHOT_DIR, `${testCase.id}-page-${currentPageNumber}-after.png`);
+        progress.stage = `page_${currentPageNumber}_capturing_after_screenshot`;
         if (await captureBenchmarkScreenshot(page, screenshotAfter, warnings)) {
           screenshotPaths.push(screenshotAfter);
         }
 
+        progress.stage = `page_${currentPageNumber}_checking_for_next_step`;
         const movedForward = await maybeAdvanceToNextPage(page, inventory, actionsTaken);
         if (!movedForward) {
           break;
@@ -1801,6 +1972,7 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
         currentPageNumber += 1;
       }
 
+      progress.stage = "computing_case_metrics";
       const metrics = metricsFromInventory(allFieldRecords);
       if (finalStatus === "completed" && metrics.answerableCount === 0) {
         finalStatus = "not_scorable";
@@ -1810,86 +1982,29 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
         warnings.push("Metadata extraction did not fully match the expected company and role.");
       }
 
-      const result: BenchmarkCaseResult = {
-        suiteRunId,
-        suiteStartedAt,
-        caseStartedAt,
-        caseFinishedAt: nowStamp(),
-        id: testCase.id,
-        ats: testCase.ats,
-        phase: testCase.phase,
-        company: testCase.company,
-        roleTitle: testCase.roleTitle,
-        url: testCase.url,
-        status: finalStatus,
-        metadata: {
-          expectedCompany: testCase.company,
-          expectedRoleTitle: testCase.roleTitle,
-          actualCompany: metadata.company,
-          actualRoleTitle: metadata.roleTitle,
-          success: metadataSuccess,
-          source: metadata.source
-        },
-        pagesReached: stageResults.length,
-        pagesFilled: stageResults.filter((stage) => stage.inventory.some((record) => record.verified)).length,
-        transitionsAttempted,
-        transitionsContinued: Math.min(transitionsAttempted, Math.max(stageResults.length - 1, 0)),
-        finalReviewPageReached: actionsTaken.some((entry) => /review/i.test(entry)),
-        rawDomCandidateCount: stageResults.reduce((sum, stage) => sum + stage.initialRawFieldCount, 0),
-        noiseRejectedCount: stageResults.reduce((sum, stage) => sum + stage.noiseRejectedCount, 0),
-        logicalFieldCount: stageResults.reduce((sum, stage) => sum + stage.logicalFieldCount, 0),
-        answerableFieldCount: metrics.answerableCount,
-        intentionallyUnresolvedCount: stageResults.reduce((sum, stage) => sum + stage.intentionallyUnresolvedCount, 0),
-        detectedCount: metrics.detectedCount,
-        attemptedCount: metrics.attemptedCount,
-        verifiedCount: metrics.verifiedCount,
-        safeAnswerableFieldCount: metrics.safeAnswerableCount,
-        safeVerifiedCount: metrics.safeVerifiedCount,
-        safeAnswerCoverage: metrics.safeAnswerCoverage,
-        userExpectedFieldCount: metrics.userExpectedCount,
-        userExpectedVerifiedCount: metrics.userExpectedVerifiedCount,
-        userExpectedCoverage: metrics.userExpectedCoverage,
-        dropdownCount: metrics.dropdownCount,
-        dropdownVerifiedCount: metrics.dropdownVerifiedCount,
-        autocompleteCount: metrics.autocompleteCount,
-        autocompleteVerifiedCount: metrics.autocompleteVerifiedCount,
-        fileUploadCount: metrics.fileUploadCount,
-        fileUploadVerifiedCount: metrics.fileUploadVerifiedCount,
-        fieldDetectionRecall: metrics.fieldDetectionRecall,
-        fillCoverage: metrics.fillCoverage,
-        fillPrecision: metrics.fillPrecision,
-        dropdownSuccess: metrics.dropdownSuccess,
-        autocompleteSuccess: metrics.autocompleteSuccess,
-        fileUploadSuccess: metrics.fileUploadSuccess,
-        severeIncorrectAnswers: metrics.severeIncorrectAnswers,
-        severeFieldFailures: metrics.severeFieldFailures,
-        generatableQuestionCount: metrics.generatableQuestionCount,
-        generatableShortAnswersDetected: metrics.generatableShortAnswersDetected,
-        generatedAnswerCount: metrics.generatedAnswerCount,
-        generatedAnswersInserted: metrics.generatedAnswersInserted,
-        generatedAnswersBrowserVerified: metrics.generatedAnswersBrowserVerified,
-        generatedAnswersPassingQuality: metrics.generatedAnswersPassingQuality,
-        generatedAnswersRejectedForQuality: metrics.generatedAnswersRejectedForQuality,
-        generatableShortAnswersFilled: metrics.generatableShortAnswersFilled,
-        rawShortAnswerCoverage: metrics.rawShortAnswerCoverage,
-        qualityApprovedShortAnswerCoverage: metrics.qualityApprovedShortAnswerCoverage,
-        humanReadyShortAnswerCoverage: metrics.humanReadyShortAnswerCoverage,
-        generatableShortAnswerCoverage: metrics.generatableShortAnswerCoverage,
-        reusableAnswersFilled: metrics.reusableAnswersFilled,
-        missingEvidenceQuestions: metrics.missingEvidenceQuestions,
-        generatedAnswersRequiringCorrection: metrics.generatedAnswersRequiringCorrection,
-        generatedAnswersAcceptedWithoutEdit: metrics.generatedAnswersAcceptedWithoutEdit,
-        manualEffort: manualEffortFromInventory(allFieldRecords, retriesRequired, unexpectedPageSwitches),
-        manualBarriers,
-        warnings: Array.from(new Set(warnings)),
-        failureCategories: summarizeFailureCategories(allFieldRecords),
-        stageResults,
-        tracePath,
-        screenshotPaths,
-        fieldInventoryPath,
-        reportPath,
-        submitted: false
-      };
+      progress.stage = "writing_case_artifacts";
+      const result = {
+        ...buildCaseResultFromProgress({
+          testCase,
+          suiteRunId,
+          suiteStartedAt,
+          caseStartedAt,
+          finalStatus,
+          metadata,
+          stageResults,
+          allFieldRecords,
+          transitionsAttempted,
+          retriesRequired,
+          unexpectedPageSwitches,
+          manualBarriers,
+          warnings,
+          tracePath,
+          screenshotPaths,
+          fieldInventoryPath,
+          reportPath
+        }),
+        finalReviewPageReached: actionsTaken.some((entry) => /review/i.test(entry))
+      } satisfies BenchmarkCaseResult;
 
       await writeFile(fieldInventoryPath, JSON.stringify(stageResults, null, 2), "utf8");
       await writeFile(reportPath, JSON.stringify(result, null, 2), "utf8");
@@ -1902,122 +2017,43 @@ async function runCase(testCase: BenchmarkCase, fixtures: SyntheticFixtures, sui
         notes: `${current.notes}\nBenchmark run completed ${nowStamp()}`
       })).catch(() => undefined);
 
+      progress.stage = "case_completed";
       return result;
     }
   } catch (error) {
-    finalStatus = "failed_runtime";
-    manualBarriers.push(error instanceof Error ? error.message : String(error));
+    const failureMessage = error instanceof Error ? error.message : String(error);
+    if (shouldPreserveCompletedStatusAfterLateFailure(finalStatus, failureMessage, allFieldRecords)) {
+      warnings.push(`Late benchmark artifact warning after successful autofill: ${failureMessage}`);
+    } else {
+      finalStatus = "failed_runtime";
+      manualBarriers.push(failureMessage);
+    }
   } finally {
+    progress.stage = "closing_trace_and_browser";
     await context.tracing.stop({ path: tracePath }).catch(() => undefined);
     await closeSessionPage(session.id).catch(() => undefined);
   }
 
-  const fallbackMetadata = {
-    company: testCase.company,
-    roleTitle: testCase.roleTitle,
-    source: "none"
-  };
-  const fallbackResult: BenchmarkCaseResult = {
+  progress.stage = "writing_fallback_case_artifacts";
+  const fallbackResult = buildCaseResultFromProgress({
+    testCase,
     suiteRunId,
     suiteStartedAt,
     caseStartedAt,
-    caseFinishedAt: nowStamp(),
-    id: testCase.id,
-    ats: testCase.ats,
-    phase: testCase.phase,
-    company: testCase.company,
-    roleTitle: testCase.roleTitle,
-    url: testCase.url,
-    status: finalStatus,
-    metadata: {
-      expectedCompany: testCase.company,
-      expectedRoleTitle: testCase.roleTitle,
-      actualCompany: fallbackMetadata.company,
-      actualRoleTitle: fallbackMetadata.roleTitle,
-      success: false,
-      source: fallbackMetadata.source
-    },
-    pagesReached: stageResults.length,
-    pagesFilled: 0,
-    transitionsAttempted: 0,
-    transitionsContinued: 0,
-    finalReviewPageReached: false,
-    rawDomCandidateCount: 0,
-    noiseRejectedCount: 0,
-    logicalFieldCount: 0,
-    answerableFieldCount: 0,
-    intentionallyUnresolvedCount: 0,
-    detectedCount: 0,
-    attemptedCount: 0,
-    verifiedCount: 0,
-    safeAnswerableFieldCount: 0,
-    safeVerifiedCount: 0,
-    safeAnswerCoverage: 0,
-    userExpectedFieldCount: 0,
-    userExpectedVerifiedCount: 0,
-    userExpectedCoverage: 0,
-    dropdownCount: 0,
-    dropdownVerifiedCount: 0,
-    autocompleteCount: 0,
-    autocompleteVerifiedCount: 0,
-    fileUploadCount: 0,
-    fileUploadVerifiedCount: 0,
-    fieldDetectionRecall: 0,
-    fillCoverage: 0,
-    fillPrecision: 0,
-    dropdownSuccess: 0,
-    autocompleteSuccess: 0,
-    fileUploadSuccess: 0,
-    severeIncorrectAnswers: 0,
-    severeFieldFailures: 0,
-    generatableQuestionCount: 0,
-    generatableShortAnswersDetected: 0,
-    generatedAnswerCount: 0,
-    generatedAnswersInserted: 0,
-    generatedAnswersBrowserVerified: 0,
-    generatedAnswersPassingQuality: 0,
-    generatedAnswersRejectedForQuality: 0,
-    generatableShortAnswersFilled: 0,
-    rawShortAnswerCoverage: 0,
-    qualityApprovedShortAnswerCoverage: 0,
-    humanReadyShortAnswerCoverage: 0,
-    generatableShortAnswerCoverage: 0,
-    reusableAnswersFilled: 0,
-    missingEvidenceQuestions: 0,
-    generatedAnswersRequiringCorrection: 0,
-    generatedAnswersAcceptedWithoutEdit: 0,
-    manualEffort: {
-      manualClicksRequired: 0,
-      manualFieldsRequired: 0,
-      unexpectedPageSwitches: 0,
-      retriesRequired: 0,
-      incorrectFieldsRequiringCorrection: 0
-    },
-    manualBarriers,
-    warnings: Array.from(new Set(warnings)),
-    failureCategories: {
-      FIELD_NOT_DETECTED: 0,
-      LABEL_ASSOCIATION_FAILED: 0,
-      INTENT_CLASSIFICATION_FAILED: 0,
-      PROFILE_FACT_MISSING: 0,
-      ANSWER_DERIVATION_FAILED: 0,
-      FORMAT_ADAPTATION_FAILED: 0,
-      CONTROL_ADAPTER_FAILED: 0,
-      OPTION_MATCHING_FAILED: 0,
-      VERIFICATION_FAILED: 0,
-      NAVIGATION_FAILED: 0,
-      METADATA_EXTRACTION_FAILED: 1,
-      PAGE_NOT_READY: finalStatus === "manual_barrier" ? 1 : 0,
-      SITE_UNAVAILABLE: finalStatus === "site_unavailable" ? 1 : 0,
-      INTENTIONALLY_UNRESOLVED: 0
-    },
+    finalStatus,
+    metadata,
     stageResults,
+    allFieldRecords,
+    transitionsAttempted,
+    retriesRequired,
+    unexpectedPageSwitches,
+    manualBarriers,
+    warnings,
     tracePath,
     screenshotPaths,
     fieldInventoryPath,
-    reportPath,
-    submitted: false
-  };
+    reportPath
+  });
 
   await writeFile(fieldInventoryPath, JSON.stringify(stageResults, null, 2), "utf8").catch(() => undefined);
   await writeFile(reportPath, JSON.stringify(fallbackResult, null, 2), "utf8").catch(() => undefined);
@@ -2034,7 +2070,13 @@ async function readPersistedCaseReport(reportPath: string, suiteRunId: string) {
   }
 }
 
-function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string, suiteRunId: string, suiteStartedAt: string): BenchmarkCaseResult {
+function timedOutCaseResult(
+  testCase: BenchmarkCase,
+  startedAt: string,
+  suiteRunId: string,
+  suiteStartedAt: string,
+  stage = "unknown_stage"
+): BenchmarkCaseResult {
   const caseDir = path.join(DEBUG_DIR, testCase.id);
   const tracePath = path.join(TRACE_DIR, `${testCase.id}.zip`);
   const fieldInventoryPath = path.join(FIELD_INVENTORY_DIR, `${testCase.id}.json`);
@@ -2116,8 +2158,8 @@ function timedOutCaseResult(testCase: BenchmarkCase, startedAt: string, suiteRun
       retriesRequired: 0,
       incorrectFieldsRequiringCorrection: 0
     },
-    manualBarriers: [`Case timed out after the configured limit. Started ${startedAt}.`],
-    warnings: ["Timed out before the benchmark case completed."],
+    manualBarriers: [formatTimeoutBarrier(startedAt, stage)],
+    warnings: [formatTimeoutWarning(stage)],
     failureCategories: {
       FIELD_NOT_DETECTED: 0,
       LABEL_ASSOCIATION_FAILED: 0,
@@ -2148,10 +2190,11 @@ function mergeTimedOutCaseResult(
   startedAt: string,
   suiteRunId: string,
   suiteStartedAt: string,
-  partial: BenchmarkCaseResult | null
+  partial: BenchmarkCaseResult | null,
+  stage = "unknown_stage"
 ): BenchmarkCaseResult {
   if (!partial) {
-    return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt);
+    return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, stage);
   }
 
   if (partial.status === "completed" || partial.status === "manual_barrier" || partial.status === "site_unavailable" || partial.status === "not_scorable") {
@@ -2164,8 +2207,10 @@ function mergeTimedOutCaseResult(
     suiteRunId,
     suiteStartedAt,
     caseFinishedAt: nowStamp(),
-    manualBarriers: Array.from(new Set([`Case timed out after the configured limit. Started ${startedAt}.`, ...partial.manualBarriers])),
-    warnings: Array.from(new Set(["Timed out before the benchmark case completed.", ...partial.warnings])),
+    manualBarriers: Array.from(
+      new Set([formatTimeoutBarrier(startedAt, partial.warnings[0]?.match(/Last recorded stage:\s(.+?)\.$/i)?.[1] || "unknown_stage"), ...partial.manualBarriers])
+    ),
+    warnings: Array.from(new Set([formatTimeoutWarning(partial.warnings[0]?.match(/Last recorded stage:\s(.+?)\.$/i)?.[1] || "unknown_stage"), ...partial.warnings])),
     submitted: false
   };
 }
@@ -2182,10 +2227,13 @@ async function runCaseWithTimeout(
   }
 
   const startedAt = nowStamp();
+  const progress: CaseExecutionProgress = {
+    stage: "initializing_case"
+  };
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let settledResult: BenchmarkCaseResult | null = null;
-  const casePromise = runCase(testCase, fixtures, suiteRunId, suiteStartedAt)
+  const casePromise = runCase(testCase, fixtures, suiteRunId, suiteStartedAt, progress)
     .then((result) => {
       settledResult = result;
       return result;
@@ -2197,7 +2245,7 @@ async function runCaseWithTimeout(
   })
     .catch((error) => {
     if (timedOut) {
-      return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt);
+      return timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage);
     }
     throw error;
   });
@@ -2205,7 +2253,7 @@ async function runCaseWithTimeout(
   const timeoutPromise = new Promise<BenchmarkCaseResult>((resolve) => {
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      resolve(timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt));
+      resolve(timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage));
     }, caseTimeoutMs);
   });
 
@@ -2224,7 +2272,7 @@ async function runCaseWithTimeout(
   }
 
   const persistedResult = await readPersistedCaseReport(
-    timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt).reportPath,
+    timedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, progress.stage).reportPath,
     suiteRunId
   );
   if (persistedResult && persistedResult.status !== "timeout") {
@@ -2233,7 +2281,14 @@ async function runCaseWithTimeout(
 
   await resetBrowserManagerForTests().catch(() => undefined);
 
-  const timedOutResult = mergeTimedOutCaseResult(testCase, startedAt, suiteRunId, suiteStartedAt, persistedResult ?? settledResult);
+  const timedOutResult = mergeTimedOutCaseResult(
+    testCase,
+    startedAt,
+    suiteRunId,
+    suiteStartedAt,
+    persistedResult ?? settledResult,
+    progress.stage
+  );
   await writeFile(timedOutResult.fieldInventoryPath, JSON.stringify(timedOutResult.stageResults, null, 2), "utf8").catch(() => undefined);
   await writeFile(timedOutResult.reportPath, JSON.stringify(timedOutResult, null, 2), "utf8").catch(() => undefined);
   return timedOutResult;
@@ -2915,4 +2970,12 @@ if (isDirectRun) {
     });
 }
 
-export { buildMetric, buildOverallSummary, mergeTimedOutCaseResult, resultBelongsToSuiteRun };
+export {
+  buildCaseResultFromProgress,
+  buildMetric,
+  buildOverallSummary,
+  mergeTimedOutCaseResult,
+  resultBelongsToSuiteRun,
+  shouldPreserveCompletedStatusAfterLateFailure,
+  timedOutCaseResult
+};

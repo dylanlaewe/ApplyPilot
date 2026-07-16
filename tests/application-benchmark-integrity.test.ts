@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOverallSummary, mergeTimedOutCaseResult, resultBelongsToSuiteRun } from "@/scripts/application-benchmark";
+import {
+  buildCaseResultFromProgress,
+  buildOverallSummary,
+  mergeTimedOutCaseResult,
+  resultBelongsToSuiteRun,
+  shouldPreserveCompletedStatusAfterLateFailure,
+  timedOutCaseResult
+} from "@/scripts/application-benchmark";
 
 function createResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -162,4 +169,266 @@ test("resultBelongsToSuiteRun rejects stale case reports from an older suite run
   assert.equal(resultBelongsToSuiteRun(createResult({ suiteRunId: "suite-current" }), "suite-current"), true);
   assert.equal(resultBelongsToSuiteRun(createResult({ suiteRunId: "suite-older" }), "suite-current"), false);
   assert.equal(resultBelongsToSuiteRun(null, "suite-current"), false);
+});
+
+test("shouldPreserveCompletedStatusAfterLateFailure keeps completed status for late page-close errors after all answerable fields verified", () => {
+  const preserve = shouldPreserveCompletedStatusAfterLateFailure("completed", "page.evaluate: Target page, context or browser has been closed", [
+    {
+      applicationId: "case-1",
+      ats: "greenhouse",
+      company: "Example",
+      roleTitle: "Engineer",
+      pageNumber: 1,
+      pageUrl: "https://example.com/apply",
+      pageHeading: "Engineer",
+      fieldLabel: "Phone*",
+      nearbyQuestionText: "Phone",
+      required: true,
+      domControlType: "text",
+      selectedAdapter: "fillTextControl",
+      detectedIntent: "phone",
+      expectedAnswerSource: "formatted_profile",
+      expectedNormalizedAnswer: "+1 6178338317",
+      availableOptions: [],
+      attemptedValue: "+1 6178338317",
+      actualValueAfterFill: "(617) 833-8317",
+      browserVerified: true,
+      verified: true,
+      outcome: "filled",
+      failureCategory: null,
+      failureReason: "Filled during benchmark.",
+      answerable: true,
+      coverageClassification: "ANSWERABLE_WITH_DERIVATION",
+      safeAnswerableNow: true,
+      userExpectedAnswerable: true,
+      profileEvidenceAvailable: "yes",
+      excludedFromAnswerableDenominatorReason: "Included in the safe-answer denominator.",
+      reasonableUserWouldExpectApplyPilotToAnswer: true,
+      oneAdditionalProfileFactCouldAnswer: false,
+      genuinelyUnsafeToAnswer: false,
+      severe: true,
+      detected: true,
+      attempted: true,
+      shortAnswerKind: "",
+      generatedProvider: "",
+      generatedEvidenceTitles: [],
+      generatedJobEvidenceTitles: [],
+      generatedWarnings: [],
+      generatedRegenerationNotes: [],
+      qualityPassed: true,
+      qualityReasons: [],
+      qualityFactualGrounding: 0,
+      qualityQuestionRelevance: 0,
+      qualityJobRelevance: 0,
+      qualityCandidateRelevance: 0,
+      qualityFluency: 0,
+      qualitySpecificity: 0,
+      qualityConcision: 0
+    }
+  ]);
+
+  assert.equal(preserve, true);
+});
+
+test("buildCaseResultFromProgress preserves populated stage metrics after a late failure", () => {
+  const inventory: Parameters<typeof buildCaseResultFromProgress>[0]["allFieldRecords"] = [
+    {
+      applicationId: "case-1",
+      ats: "greenhouse",
+      company: "Example",
+      roleTitle: "Engineer",
+      pageNumber: 1,
+      pageUrl: "https://example.com/apply",
+      pageHeading: "Engineer",
+      fieldLabel: "First Name*",
+      nearbyQuestionText: "First Name",
+      required: true,
+      domControlType: "text",
+      selectedAdapter: "fillTextControl",
+      detectedIntent: "first_name",
+      expectedAnswerSource: "explicit_profile",
+      expectedNormalizedAnswer: "Avery",
+      availableOptions: [],
+      attemptedValue: "Avery",
+      actualValueAfterFill: "Avery",
+      browserVerified: true,
+      verified: true,
+      outcome: "filled",
+      failureCategory: null,
+      failureReason: "Filled during benchmark.",
+      answerable: true,
+      coverageClassification: "ANSWERABLE_NOW",
+      safeAnswerableNow: true,
+      userExpectedAnswerable: true,
+      profileEvidenceAvailable: "yes",
+      excludedFromAnswerableDenominatorReason: "Included in the safe-answer denominator.",
+      reasonableUserWouldExpectApplyPilotToAnswer: true,
+      oneAdditionalProfileFactCouldAnswer: false,
+      genuinelyUnsafeToAnswer: false,
+      severe: false,
+      detected: true,
+      attempted: true,
+      shortAnswerKind: "",
+      generatedProvider: "",
+      generatedEvidenceTitles: [],
+      generatedJobEvidenceTitles: [],
+      generatedWarnings: [],
+      generatedRegenerationNotes: [],
+      qualityPassed: true,
+      qualityReasons: [],
+      qualityFactualGrounding: 0,
+      qualityQuestionRelevance: 0,
+      qualityJobRelevance: 0,
+      qualityCandidateRelevance: 0,
+      qualityFluency: 0,
+      qualitySpecificity: 0,
+      qualityConcision: 0
+    },
+    {
+      applicationId: "case-1",
+      ats: "greenhouse",
+      company: "Example",
+      roleTitle: "Engineer",
+      pageNumber: 1,
+      pageUrl: "https://example.com/apply",
+      pageHeading: "Engineer",
+      fieldLabel: "Phone*",
+      nearbyQuestionText: "Phone",
+      required: true,
+      domControlType: "text",
+      selectedAdapter: "fillTextControl",
+      detectedIntent: "phone",
+      expectedAnswerSource: "formatted_profile",
+      expectedNormalizedAnswer: "+1 6178338317",
+      availableOptions: [],
+      attemptedValue: "+1 6178338317",
+      actualValueAfterFill: "(617) 833-8317",
+      browserVerified: true,
+      verified: true,
+      outcome: "filled",
+      failureCategory: null,
+      failureReason: "Filled during benchmark.",
+      answerable: true,
+      coverageClassification: "ANSWERABLE_WITH_DERIVATION",
+      safeAnswerableNow: true,
+      userExpectedAnswerable: true,
+      profileEvidenceAvailable: "yes",
+      excludedFromAnswerableDenominatorReason: "Included in the safe-answer denominator.",
+      reasonableUserWouldExpectApplyPilotToAnswer: true,
+      oneAdditionalProfileFactCouldAnswer: false,
+      genuinelyUnsafeToAnswer: false,
+      severe: true,
+      detected: true,
+      attempted: true,
+      shortAnswerKind: "",
+      generatedProvider: "",
+      generatedEvidenceTitles: [],
+      generatedJobEvidenceTitles: [],
+      generatedWarnings: [],
+      generatedRegenerationNotes: [],
+      qualityPassed: true,
+      qualityReasons: [],
+      qualityFactualGrounding: 0,
+      qualityQuestionRelevance: 0,
+      qualityJobRelevance: 0,
+      qualityCandidateRelevance: 0,
+      qualityFluency: 0,
+      qualitySpecificity: 0,
+      qualityConcision: 0
+    }
+  ];
+
+  const result = buildCaseResultFromProgress({
+    testCase: {
+      id: "case-1",
+      ats: "greenhouse",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    suiteRunId: "suite-1",
+    suiteStartedAt: "2026-07-12T00:00:00.000Z",
+    caseStartedAt: "2026-07-12T00:00:01.000Z",
+    finalStatus: "failed_runtime",
+    metadata: {
+      company: "Example",
+      roleTitle: "Engineer",
+      source: "page_heading"
+    },
+    stageResults: [
+      {
+        pageNumber: 1,
+        pageUrl: "https://example.com/apply",
+        pageHeading: "Engineer",
+        actionsTaken: [],
+        initialRawFieldCount: 2,
+        noiseRejectedCount: 0,
+        groupedControlCount: 0,
+        deduplicatedFieldCount: 0,
+        logicalFieldCount: 2,
+        answerableFieldCount: 2,
+        intentionallyUnresolvedCount: 0,
+        finalDetectedFieldCount: 2,
+        inventory: [...inventory]
+      }
+    ],
+    allFieldRecords: [...inventory],
+    transitionsAttempted: 0,
+    retriesRequired: 1,
+    unexpectedPageSwitches: 0,
+    manualBarriers: ["page.evaluate: Target page, context or browser has been closed"],
+    warnings: [],
+    tracePath: "/tmp/trace.zip",
+    screenshotPaths: ["/tmp/before.png", "/tmp/after.png"],
+    fieldInventoryPath: "/tmp/inventory.json",
+    reportPath: "/tmp/report.json"
+  });
+
+  assert.equal(result.pagesReached, 1);
+  assert.equal(result.pagesFilled, 1);
+  assert.equal(result.answerableFieldCount, 2);
+  assert.equal(result.verifiedCount, 2);
+  assert.equal(result.fillCoverage, 1);
+});
+
+test("timedOutCaseResult records the last benchmark stage in its timeout message", () => {
+  const result = timedOutCaseResult(
+    {
+      id: "case-4",
+      ats: "greenhouse",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    "2026-07-16T00:00:00.000Z",
+    "suite-1",
+    "2026-07-16T00:00:00.000Z",
+    "page_1_autofill_pass_2"
+  );
+
+  assert.match(result.manualBarriers[0] ?? "", /during page_1_autofill_pass_2/i);
+  assert.match(result.warnings[0] ?? "", /Last recorded stage: page_1_autofill_pass_2/i);
+});
+
+test("mergeTimedOutCaseResult preserves the tracked stage when no persisted partial result exists", () => {
+  const result = mergeTimedOutCaseResult(
+    {
+      id: "case-5",
+      ats: "greenhouse",
+      phase: 1,
+      company: "Example",
+      roleTitle: "Engineer",
+      url: "https://example.com/apply"
+    },
+    "2026-07-16T00:00:00.000Z",
+    "suite-1",
+    "2026-07-16T00:00:00.000Z",
+    null,
+    "page_1_collecting_inventory"
+  );
+
+  assert.match(result.manualBarriers[0] ?? "", /during page_1_collecting_inventory/i);
+  assert.match(result.warnings[0] ?? "", /Last recorded stage: page_1_collecting_inventory/i);
 });
