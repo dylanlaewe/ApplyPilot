@@ -14,6 +14,7 @@ import {
   resetBrowserManagerForTests
 } from "@/lib/browserManager";
 import { extractJobMetadata } from "@/lib/jobMetadata";
+import { scanVisibleFields } from "@/lib/playwrightSession";
 
 Object.assign(process.env, { NODE_ENV: "test" });
 
@@ -219,6 +220,69 @@ test("browser manager prefers the live Workday apply page over the older job lis
   assert.equal(resolvedPage, applyPage);
   assert.notEqual(resolvedPage, listingPage);
   assert.equal(context.pages().length, pageCountBefore + 1);
+
+  await resetBrowserManagerForTests();
+});
+
+test("Workday scanner ignores header chrome buttons and keeps Brown-style application fields", async () => {
+  await resetBrowserManagerForTests();
+
+  const context = await getOrCreateBrowserContext();
+  await context.route("https://brown.wd5.myworkdayjobs.com/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `
+        <html>
+          <head><title>Brown University Careers</title></head>
+          <body>
+            <header data-automation-id="globalHeader">
+              <button id="settingsSelectorButton" aria-expanded="false">Settings</button>
+              <button id="accountSettingsButton" aria-expanded="false">Account</button>
+            </header>
+            <main role="main">
+              <h1>My Information</h1>
+              <form>
+                <label for="heard_about">How Did You Hear About Us?</label>
+                <button id="heard_about" aria-haspopup="listbox" type="button">Select...</button>
+                <label for="country">Country</label>
+                <input id="country" name="country" role="combobox" aria-controls="country-listbox" />
+                <label for="first_name">First Name</label>
+                <input id="first_name" name="first_name" autocomplete="given-name" />
+                <label for="last_name">Last Name</label>
+                <input id="last_name" name="last_name" autocomplete="family-name" />
+              </form>
+              <div id="country-listbox" role="listbox" style="display:none">
+                <div role="option">United States</div>
+                <div role="option">Canada</div>
+              </div>
+            </main>
+          </body>
+        </html>
+      `
+    });
+  });
+
+  const page = await getOrCreateSessionPage("session-brown-scan", {
+    url: "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/job/Wilbour-Hall/Administrative-Coordinator_REQ210155/apply/applyManually",
+    reuseOpenPage: false,
+    focus: false
+  });
+
+  const fields = await scanVisibleFields(page);
+  const ids = fields.map((field) => field.domId);
+  const labels = fields.map((field) => field.label);
+
+  assert.ok(ids.includes("heard_about"));
+  assert.ok(ids.includes("country"));
+  assert.ok(ids.includes("first_name"));
+  assert.ok(ids.includes("last_name"));
+  assert.ok(labels.includes("How Did You Hear About Us?"));
+  assert.ok(labels.includes("Country"));
+  assert.ok(labels.includes("First Name"));
+  assert.ok(labels.includes("Last Name"));
+  assert.ok(!ids.includes("settingsSelectorButton"));
+  assert.ok(!ids.includes("accountSettingsButton"));
 
   await resetBrowserManagerForTests();
 });

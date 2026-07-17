@@ -9,6 +9,7 @@ import {
   buildWorkdayFieldKey,
   completeWorkdayPass,
   executeWorkdayFillPlan,
+  failWorkdayPass,
   getWorkdaySafeModeState,
   matchExactCountryAliasOption,
   resumeWorkdaySafeMode,
@@ -78,6 +79,21 @@ test("Workday safe mode only runs on a user-triggered pass and blocks concurrent
   assert.equal(stopped.reason, "Stopped");
 });
 
+test("failed Workday passes always clear the in-progress lock", () => {
+  const sessionId = `workday-failure-${Date.now()}`;
+  resumeWorkdaySafeMode(sessionId);
+
+  const started = beginWorkdayPass(sessionId, "page-a");
+  assert.equal(started.allowed, true);
+  assert.equal(getWorkdaySafeModeState(sessionId).inProgress, true);
+
+  failWorkdayPass(sessionId);
+  assert.equal(getWorkdaySafeModeState(sessionId).inProgress, false);
+
+  const restarted = beginWorkdayPass(sessionId, "page-a");
+  assert.equal(restarted.allowed, true);
+});
+
 test("country matching uses only exact approved aliases", () => {
   const match = matchExactCountryAliasOption(
     ["Canada", "United States", "United States Minor Outlying Islands", "United States Virgin Islands"],
@@ -95,7 +111,7 @@ test("country matching uses only exact approved aliases", () => {
   assert.equal(rejected, null);
 });
 
-test("high-risk Workday fields fail closed and are not guessed", () => {
+test("high-risk Workday fields fail closed and exact country dropdowns stay eligible", () => {
   const [country, veteran, sponsorship, workAuthorization] = applyWorkdaySafeModeRules([
     field({
       label: "Country",
@@ -135,8 +151,8 @@ test("high-risk Workday fields fail closed and are not guessed", () => {
   ]);
 
   assert.equal(country.status, "needs_review");
-  assert.equal(country.suggestedValue, "");
-  assert.equal(country.reason, "Needs an exact dropdown mapping");
+  assert.equal(country.suggestedValue, "US");
+  assert.match(country.reason, /Safe to autofill on this Workday page/i);
   assert.equal(country.matchedOption, "United States");
 
   assert.equal(veteran.status, "sensitive");
@@ -148,6 +164,24 @@ test("high-risk Workday fields fail closed and are not guessed", () => {
 
   assert.equal(workAuthorization.status, "sensitive");
   assert.equal(workAuthorization.suggestedValue, "");
+});
+
+test("Workday country dropdowns remain manual when no exact safe option exists", () => {
+  const [country] = applyWorkdaySafeModeRules([
+    field({
+      label: "Country",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "country",
+      suggestedValue: "United States",
+      selectOptions: ["United States Minor Outlying Islands", "United States Virgin Islands"]
+    })
+  ]);
+
+  assert.equal(country.status, "needs_review");
+  assert.equal(country.suggestedValue, "");
+  assert.equal(country.reason, "Needs an exact dropdown mapping");
+  assert.equal(country.matchedOption, undefined);
 });
 
 test("repeatable sections stay manual only when Workday cannot safely map the visible entry", () => {
@@ -253,6 +287,41 @@ test("Workday execution plan runs top-to-bottom, scrolls once per section, and n
   assert.equal(attempts.get("third"), 1);
   assert.deepEqual(scrolls, ["second"]);
   assert.equal(result.skippedVerifiedCount, 1);
+  assert.equal(result.completedCount, 2);
+});
+
+test("Workday execution plan keeps going after one field needs manual review", async () => {
+  const first = field({ id: "first", label: "First name", selector: "#first", intent: "first_name" });
+  const second = field({ id: "second", label: "Country", selector: "#country", intent: "country", matchedOption: "United States" });
+  const third = field({ id: "third", label: "Last name", selector: "#last", intent: "last_name", suggestedValue: "Example" });
+
+  const plan = buildWorkdayExecutionPlan(
+    [first, second, third],
+    [
+      { fieldId: "first", top: 100, bottom: 140, inViewport: true, sectionKey: "contact" },
+      { fieldId: "second", top: 180, bottom: 220, inViewport: true, sectionKey: "contact" },
+      { fieldId: "third", top: 260, bottom: 300, inViewport: true, sectionKey: "contact" }
+    ]
+  );
+
+  const order: string[] = [];
+  const result = await executeWorkdayFillPlan({
+    plan,
+    isAlreadyVerified: () => false,
+    getLatestMetrics: async (current) => ({
+      top: plan.find((item) => item.field.id === current.id)?.top ?? 0,
+      inViewport: true,
+      sectionKey: "contact"
+    }),
+    scrollToField: async () => undefined,
+    fillOneField: async (current) => {
+      order.push(current.id);
+      return current.id !== "second";
+    }
+  });
+
+  assert.deepEqual(order, ["first", "second", "third"]);
+  assert.equal(result.attemptedCount, 3);
   assert.equal(result.completedCount, 2);
 });
 

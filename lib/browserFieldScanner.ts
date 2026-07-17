@@ -44,6 +44,20 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     "[contenteditable='true']"
   ].join(", ");
   const FIELD_BOUNDARY_SELECTORS = [FIELD_CONTAINER_SELECTORS, FIELD_CONTROL_SELECTORS].join(", ");
+  const WORKDAY_CHROME_ANCESTOR_SELECTORS = [
+    "header",
+    "nav",
+    "[role='banner']",
+    "[role='navigation']",
+    "[data-automation-id*='header']",
+    "[data-automation-id*='toolbar']",
+    "[data-automation-id*='navigation']",
+    "[data-automation-id*='utility']",
+    "[data-automation-id*='account']",
+    "[data-automation-id*='profile']",
+    "[data-automation-id*='avatar']",
+    "[data-automation-id*='menu']"
+  ].join(", ");
 
   const isVisibleElement = (element) => {
     if (!(element instanceof HTMLElement)) return false;
@@ -59,6 +73,8 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
       .replace(/[|]+/g, " ")
       .replace(/\s{2,}/g, " ")
       .trim();
+
+  const isWorkdayApplicationPage = () => /(?:myworkdayjobs|workday)/i.test(window.location.hostname + window.location.pathname);
 
   const looksLikeNoiseFragment = (value) => {
     const text = normalizeFragment(value).toLowerCase();
@@ -269,6 +285,40 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
   const resolveOptionLabel = (element) =>
     cleanText(resolveExplicitLabel(element) || element.getAttribute("aria-label") || (element instanceof HTMLElement ? element.innerText : element.textContent) || "");
 
+  const elementLooksLikeQuestionContainer = (container) => {
+    if (!(container instanceof HTMLElement)) return false;
+    if (container.matches("fieldset, [role='group'], [role='radiogroup'], [data-automation-id='formField'], .application-question, .form-field, .form-group, .field-wrapper, .text-input-wrapper, .input-wrapper")) {
+      return true;
+    }
+    return Boolean(container.querySelector("label, legend, [data-ui='question'], .label, [class*='label']"));
+  };
+
+  const looksLikeWorkdayChromeControl = (element, container, signalText) => {
+    if (!isWorkdayApplicationPage()) return false;
+    if (element.closest(WORKDAY_CHROME_ANCESTOR_SELECTORS)) return true;
+
+    const normalizedSignal = normalizeFragment(signalText).toLowerCase();
+    if (!normalizedSignal) return false;
+
+    if (!/settingsselectorbutton|accountsettingsbutton|settings|account|profile|avatar|help|support|language|menu|navigation|notification|inbox/.test(normalizedSignal)) {
+      return false;
+    }
+
+    if (elementLooksLikeQuestionContainer(container)) {
+      return false;
+    }
+
+    if (
+      element instanceof HTMLButtonElement ||
+      element.getAttribute("role") === "button" ||
+      element.matches("button[aria-haspopup='listbox'], button[aria-expanded]")
+    ) {
+      return true;
+    }
+
+    return false;
+  };
+
   const controls = Array.from(
     document.querySelectorAll(
       [
@@ -312,6 +362,19 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
       const questionContainerText = extractLocalQuestionContext(element, owningContainer);
       const optionLabel = resolveOptionLabel(element);
       const groupKey = ensureGroupId(element, index);
+      const controlSignalText = [
+        element.getAttribute("id") || "",
+        element.getAttribute("name") || "",
+        element.getAttribute("aria-label") || "",
+        explicitLabel,
+        ariaLabelledByText,
+        legendText,
+        nearestVisibleLabel,
+        questionContainerText,
+        optionLabel
+      ].join(" ");
+
+      if (looksLikeWorkdayChromeControl(element, owningContainer, controlSignalText)) continue;
 
       const isBooleanControl =
         (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) || role === "checkbox" || role === "radio";

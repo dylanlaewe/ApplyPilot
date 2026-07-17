@@ -89,7 +89,7 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
   "previous_employment"
 ]);
 
-const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree"]);
+const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country"]);
 
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "work_authorization",
@@ -326,7 +326,13 @@ export function applyWorkdaySafeModeRules(
 
     if (next.intent === "country") {
       const exactCountryMatch = matchExactCountryAliasOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
-      if (!isFillableWorkdayTextControl(next)) {
+      if (isFillableWorkdaySelectControl(next)) {
+        if (!exactCountryMatch) {
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          return next;
+        }
+        next.matchedOption = exactCountryMatch.option;
+      } else if (!isFillableWorkdayTextControl(next)) {
         clearFieldForManualReview(next, "Needs an exact dropdown mapping");
         if (exactCountryMatch) {
           next.matchedOption = exactCountryMatch.option;
@@ -350,8 +356,8 @@ export function applyWorkdaySafeModeRules(
       return next;
     }
 
-    if (WORKDAY_SAFE_SELECT_INTENTS.has(next.intent)) {
-      if (!isFillableWorkdaySelectControl(next) || !next.matchedOption) {
+    if (WORKDAY_SAFE_SELECT_INTENTS.has(next.intent) && isFillableWorkdaySelectControl(next)) {
+      if (!next.matchedOption) {
         clearFieldForManualReview(next, "Needs an exact dropdown mapping");
         return next;
       }

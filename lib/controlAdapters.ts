@@ -379,5 +379,5 @@ export async function fillAutocompleteControl(frame: Frame, field: DetectedField
 }
 
 export async function fillWorkdaySelect(frame: Frame, field: DetectedField, value: string) {
-  await fillCustomCombobox(frame, field, value);
+  await fillCustomCombobox(frame, field, field.matchedOption || value);
 }

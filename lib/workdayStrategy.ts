@@ -6,7 +6,7 @@ import { getApplicationTransitionDiagnostics, recordApplicationTransitionEvent }
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
-import { fillField, launchBrowserSession, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
+import { fillField, launchBrowserSession, recoverFieldSelector, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
 import {
   applyWorkdaySafeModeRules,
@@ -42,6 +42,27 @@ type PreparedWorkdaySafeState = {
   tenant: string;
   resumedAfterBarrier: boolean;
 };
+
+const WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS = 1_500;
+const WORKDAY_FIELD_FILL_TIMEOUT_MS = 12_000;
+const WORKDAY_PASS_TIMEOUT_MS = 45_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 function resolveFieldFrame(page: Page, field: Pick<DetectedField, "frameUrl" | "frameName">): Frame {
   if (!field.frameUrl && !field.frameName) return page.mainFrame();
@@ -106,13 +127,48 @@ async function readWorkdayPageIdentity(page: Page) {
   };
 }
 
+async function resolveWorkdayFieldHandle(page: Page, field: DetectedField) {
+  const frame = resolveFieldFrame(page, field);
+  let locator = frame.locator(field.selector).first();
+  let count = await locator.count().catch(() => 0);
+
+  if (!count) {
+    const recoveredSelector = await recoverFieldSelector(frame, field).catch(() => "");
+    if (recoveredSelector) {
+      locator = frame.locator(recoveredSelector).first();
+      count = await locator.count().catch(() => 0);
+    }
+  }
+
+  if (!count) {
+    return {
+      frame,
+      handle: null as Awaited<ReturnType<typeof locator.elementHandle>> | null
+    };
+  }
+
+  const handle = await locator.elementHandle({ timeout: WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS }).catch(() => null);
+  return {
+    frame,
+    handle
+  };
+}
+
 async function readWorkdayFieldMetrics(page: Page, fields: DetectedField[]) {
   return Promise.all(
     fields.map(async (field) => {
-      const frame = resolveFieldFrame(page, field);
-      return frame
-        .locator(field.selector)
-        .first()
+      const { handle } = await resolveWorkdayFieldHandle(page, field);
+      if (!handle) {
+        return {
+          fieldId: field.id,
+          top: Number.MAX_SAFE_INTEGER,
+          bottom: Number.MAX_SAFE_INTEGER,
+          inViewport: false,
+          sectionKey: "page"
+        };
+      }
+
+      const metrics = await handle
         .evaluate((element, fieldId) => {
           const rect = element.getBoundingClientRect();
           const inViewport = rect.top >= 0 && rect.bottom <= window.innerHeight;
@@ -136,20 +192,26 @@ async function readWorkdayFieldMetrics(page: Page, fields: DetectedField[]) {
           inViewport: false,
           sectionKey: "page"
         }));
+
+      await handle.dispose().catch(() => undefined);
+      return metrics;
     })
   );
 }
 
 async function scrollWorkdayFieldIntoView(page: Page, field: DetectedField) {
-  const frame = resolveFieldFrame(page, field);
-  await frame
-    .locator(field.selector)
-    .first()
+  const { handle } = await resolveWorkdayFieldHandle(page, field);
+  if (!handle) {
+    return;
+  }
+
+  await handle
     .evaluate((element) => {
       if (!(element instanceof HTMLElement)) return;
       element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
     })
     .catch(() => undefined);
+  await handle.dispose().catch(() => undefined);
 }
 
 async function prepareWorkdaySafeFields(
@@ -336,11 +398,16 @@ export async function runWorkdaySafePass(
     }));
 
     const auditEntries: AuditLogEntry[] = [];
-    await executeWorkdayFillPlan({
+    await withTimeout(
+      executeWorkdayFillPlan({
       plan: prepared.plan,
       isAlreadyVerified: (fieldKey) => getWorkdaySafeModeState(sessionId).verifiedFieldKeys.has(fieldKey),
       getLatestMetrics: async (field) => {
-        const [metric] = await readWorkdayFieldMetrics(prepared.runtime.page, [field]);
+        const [metric] = await withTimeout(
+          readWorkdayFieldMetrics(prepared.runtime.page, [field]),
+          WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
+          `Timed out locating ${field.label || field.name || "field"} on the Workday page.`
+        );
         return {
           top: metric?.top ?? Number.MAX_SAFE_INTEGER,
           inViewport: metric?.inViewport ?? false,
@@ -348,15 +415,23 @@ export async function runWorkdaySafePass(
         };
       },
       scrollToField: async (field) => {
-        await scrollWorkdayFieldIntoView(prepared.runtime.page, field);
+        await withTimeout(
+          scrollWorkdayFieldIntoView(prepared.runtime.page, field),
+          WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
+          `Timed out scrolling ${field.label || field.name || "field"} into view.`
+        );
       },
       fillOneField: async (field) => {
         try {
-          const verification = await fillField(prepared.runtime.page, field, field.suggestedValue, {
-            allowRetry: false,
-            highlight: false,
-            preferDirectInput: true
-          });
+          const verification = await withTimeout(
+            fillField(prepared.runtime.page, field, field.suggestedValue, {
+              allowRetry: false,
+              highlight: false,
+              preferDirectInput: true
+            }),
+            WORKDAY_FIELD_FILL_TIMEOUT_MS,
+            `Timed out filling ${field.label || field.name || "field"} on the Workday page.`
+          );
           field.detectedValue = verification.actualValue || field.suggestedValue;
           field.status = "filled";
           field.verificationStatus = "verified";
@@ -387,7 +462,10 @@ export async function runWorkdaySafePass(
           return false;
         }
       }
-    });
+    }),
+      WORKDAY_PASS_TIMEOUT_MS,
+      "Workday safe pass timed out before the page settled."
+    );
 
     completeWorkdayPass(sessionId, verifiedFieldKeys);
     recordDiagnostic?.("pass_finished");

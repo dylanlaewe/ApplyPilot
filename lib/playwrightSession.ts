@@ -350,7 +350,7 @@ function fieldRecoveryKey(field: Pick<DetectedField, "domId" | "name" | "label" 
   ].join("::");
 }
 
-async function recoverFieldSelector(frame: Frame, field: DetectedField) {
+export async function recoverFieldSelector(frame: Frame, field: DetectedField) {
   const rescanned = prepareLogicalFields(
     await evaluateVisibleFieldCandidates(frame, {
       prefix: buildSelectorAttribute(Date.now()),
