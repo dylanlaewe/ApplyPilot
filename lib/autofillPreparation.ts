@@ -37,13 +37,19 @@ export function waitingState({
   pageWarnings,
   hasFields,
   loginRequired,
-  captchaStatus
+  captchaStatus,
+  formReachedOverride = false
 }: {
   pageWarnings: string[];
   hasFields: boolean;
   loginRequired: boolean;
   captchaStatus: CaptchaDetectionStatus | undefined;
+  formReachedOverride?: boolean;
 }) {
+  if (formReachedOverride) {
+    return null;
+  }
+
   if (loginRequired || pageWarnings.some((warning) => warning.toLowerCase().includes("login"))) {
     return {
       statusMessage: "Sign-in needed.",
@@ -101,7 +107,8 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
           pageWarnings: pageSummary.warnings,
           hasFields: rawFields.length > 0,
           loginRequired,
-          captchaStatus: captchaDetection.status
+          captchaStatus: captchaDetection.status,
+          formReachedOverride: Boolean(workdayBarrier?.formReached)
         });
 
   const jobContext = buildJobContext({

@@ -6,6 +6,7 @@ import {
   getWorkdayBarrierStatusLabel,
   prepareWorkdayAccountAssistFields
 } from "@/lib/workdayBarrier";
+import { waitingState } from "@/lib/autofillPreparation";
 import type { DetectedField } from "@/types";
 
 function snapshot(overrides: Partial<Parameters<typeof classifyWorkdayBarrierSnapshot>[0]> = {}) {
@@ -212,6 +213,39 @@ test("Workday barrier classifier clears stale account-creation copy when applica
   );
 
   assert.equal(result.kind, "form_reached");
+});
+
+test("Workday barrier classifier treats My Experience pages with add sections as application forms", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      url: "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/job/Wilbour-Hall/Administrative-Coordinator_REQ210155/apply/applyManually",
+      title: "Brown University Careers",
+      heading: "My Experience",
+      headings: ["My Experience", "Work Experience", "Education", "Resume / CV"],
+      stepLabels: ["Current Step 4 of 7", "My Information", "My Experience", "Application Questions", "Review"],
+      bodyText:
+        "My Experience Back to Job Posting Current Step 4 of 7 Work Experience Add Education Add Resume / CV Upload Save and Continue",
+      buttons: ["Back", "Save and Continue", "Add", "Add"],
+      visibleInputs: []
+    })
+  );
+
+  assert.equal(result.kind, "form_reached");
+  assert.equal(result.formReached, true);
+  assert.equal(result.manualBarrier, false);
+  assert.equal(result.evidence.hasApplicationStepper, true);
+});
+
+test("waiting state does not show navigation barrier copy once a Workday form page is reached", () => {
+  const result = waitingState({
+    pageWarnings: [],
+    hasFields: false,
+    loginRequired: false,
+    captchaStatus: "none",
+    formReachedOverride: true
+  });
+
+  assert.equal(result, null);
 });
 
 test("hidden or stale MFA text alone does not produce an MFA barrier", () => {
