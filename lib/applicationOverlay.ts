@@ -11,7 +11,22 @@ export type ApplicationOverlayActionResult = {
   ok: boolean;
   status: string;
   message: string;
-  unresolved?: Array<{ label: string; reason: string }>;
+  recognized?: Array<{
+    label: string;
+    status: string;
+    intent?: string;
+    value?: string;
+    source?: string;
+    controlType?: string;
+    timing?: string;
+  }>;
+  unresolved?: Array<{
+    label: string;
+    reason: string;
+    status?: string;
+    source?: string;
+    controlType?: string;
+  }>;
 };
 
 export type ApplicationOverlayCorrectionPayload = {
@@ -164,6 +179,44 @@ export function getApplicationOverlayMarkup() {
           gap: 6px;
           font-size: 12px;
           color: #334155;
+        }
+        #${OVERLAY_ID} .details {
+          display: grid;
+          gap: 8px;
+        }
+        #${OVERLAY_ID} .detail-group {
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          border-radius: 14px;
+          background: rgba(248, 250, 252, 0.72);
+          overflow: hidden;
+        }
+        #${OVERLAY_ID} .detail-group summary {
+          padding: 9px 11px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #334155;
+        }
+        #${OVERLAY_ID} .detail-group[open] summary {
+          border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        }
+        #${OVERLAY_ID} .detail-group-body {
+          padding: 10px 11px;
+          display: grid;
+          gap: 8px;
+        }
+        #${OVERLAY_ID} .detail-item {
+          display: grid;
+          gap: 2px;
+        }
+        #${OVERLAY_ID} .detail-item-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        #${OVERLAY_ID} .detail-item-meta {
+          font-size: 11px;
+          color: #64748b;
+          line-height: 1.45;
         }
         #${OVERLAY_ID} .correction-panel {
           border-top: 1px solid rgba(15, 23, 42, 0.08);
@@ -398,17 +451,51 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
       result.textContent = nextMessage;
       details.replaceChildren();
     };
+    const renderFieldGroup = (title, items) => {
+      const group = document.createElement("details");
+      group.className = "detail-group";
+      const summary = document.createElement("summary");
+      summary.textContent = title;
+      const body = document.createElement("div");
+      body.className = "detail-group-body";
+
+      items.forEach((item) => {
+        const entry = document.createElement("div");
+        entry.className = "detail-item";
+        const itemTitle = document.createElement("div");
+        itemTitle.className = "detail-item-title";
+        itemTitle.textContent = item.label;
+        const meta = document.createElement("div");
+        meta.className = "detail-item-meta";
+        const metaParts = [
+          item.status ? "Status: " + item.status : "",
+          item.intent ? "Intent: " + item.intent : "",
+          item.value ? "Value: " + item.value : "",
+          item.source ? "Source: " + item.source : "",
+          item.controlType ? "Control: " + item.controlType : "",
+          item.timing ? "Timing: " + item.timing : "",
+          item.reason ? "Reason: " + item.reason : ""
+        ].filter(Boolean);
+        meta.textContent = metaParts.join(" | ");
+        entry.appendChild(itemTitle);
+        entry.appendChild(meta);
+        body.appendChild(entry);
+      });
+
+      group.appendChild(summary);
+      group.appendChild(body);
+      return group;
+    };
     const renderResult = (payload) => {
       showMessage(payload.status, payload.message);
-      if (payload.unresolved?.length) {
-        const list = document.createElement("ul");
-        payload.unresolved.slice(0, 6).forEach((item) => {
-          const entry = document.createElement("li");
-          entry.textContent = item.label + ": " + item.reason;
-          list.appendChild(entry);
-        });
-        details.replaceChildren(list);
+      const groups = [];
+      if (payload.recognized?.length) {
+        groups.push(renderFieldGroup("Show recognized fields (" + payload.recognized.length + ")", payload.recognized.slice(0, 10)));
       }
+      if (payload.unresolved?.length) {
+        groups.push(renderFieldGroup("Needs your review (" + payload.unresolved.length + ")", payload.unresolved.slice(0, 10)));
+      }
+      details.replaceChildren(...groups);
     };
     const runAction = async (action) => {
       const binding = window[bindingName];

@@ -57,6 +57,16 @@ test("universal overlay click path reaches the bridge handler and updates the lo
       ok: true,
       status: "Finished",
       message: "14 fields completed / 3 need your input / Ready for review",
+      recognized: [
+        {
+          label: "First Name",
+          status: "Filled and verified",
+          intent: "first name",
+          value: "Avery",
+          source: "Saved profile",
+          controlType: "text"
+        }
+      ],
       unresolved: [
         { label: "Country", reason: "Needs an exact dropdown mapping" },
         { label: "Work authorization", reason: "Sensitive question requires your review" }
@@ -75,7 +85,11 @@ test("universal overlay click path reaches the bridge handler and updates the lo
 
   assert.deepEqual(actions, ["session-workday:fill-page"]);
   assert.equal((await page.locator("#applypilot-overlay .status").textContent()) ?? "", "Finished");
-  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Country: Needs an exact dropdown mapping/);
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Show recognized fields \(1\)/);
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /First Name/);
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Status: Filled and verified/);
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Country/);
+  assert.match((await page.locator("#applypilot-overlay .details").textContent()) ?? "", /Reason: Needs an exact dropdown mapping/);
   assert.match((await page.locator("#applypilot-overlay .result").textContent()) ?? "", /14 fields completed/);
 
   await page.locator("#email").focus();
