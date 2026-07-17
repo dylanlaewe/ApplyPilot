@@ -78,6 +78,76 @@ test("browser manager can rebind a session to the page the user is actively usin
   await resetBrowserManagerForTests();
 });
 
+test("browser manager prefers the live Workday apply page over the older job listing tab", async () => {
+  await resetBrowserManagerForTests();
+
+  const context = await getOrCreateBrowserContext();
+  await context.route("https://tenant.wd5.myworkdayjobs.com/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/apply/applyManually")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Administrative Coordinator</title></head>
+            <body>
+              <h1>My Information</h1>
+              <p>Back to Job Posting</p>
+              <label for="country">Country</label>
+              <select id="country" name="country">
+                <option>United States</option>
+              </select>
+              <label for="source">How Did You Hear About Us?</label>
+              <select id="source" name="source">
+                <option>LinkedIn</option>
+              </select>
+            </body>
+          </html>
+        `
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `
+        <html>
+          <head><title>Administrative Coordinator</title></head>
+          <body>
+            <h1>Administrative Coordinator</h1>
+            <a href="https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply">Apply</a>
+          </body>
+        </html>
+      `
+    });
+  });
+
+  const listingPage = await getOrCreateSessionPage("session-workday", {
+    url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123",
+    reuseOpenPage: false
+  });
+  const pageCountBefore = context.pages().length;
+
+  const applyPage = await context.newPage();
+  await applyPage.goto("https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply/applyManually", {
+    waitUntil: "domcontentloaded"
+  });
+
+  const resolvedPage = await getOrCreateSessionPage("session-workday", {
+    url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123",
+    navigate: false,
+    focus: false
+  });
+
+  assert.equal(resolvedPage, applyPage);
+  assert.notEqual(resolvedPage, listingPage);
+  assert.equal(context.pages().length, pageCountBefore + 1);
+
+  await resetBrowserManagerForTests();
+});
+
 test("job metadata extraction prefers JSON-LD job posting metadata", async () => {
   await resetBrowserManagerForTests();
 

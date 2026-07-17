@@ -6,7 +6,7 @@ import { getApplicationTransitionDiagnostics, recordApplicationTransitionEvent }
 import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
-import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
+import { fillField, launchBrowserSession, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
 import {
   applyWorkdaySafeModeRules,
@@ -156,9 +156,9 @@ async function prepareWorkdaySafeFields(
   sessionId: string,
   session: ApplicationSession,
   isRetry: boolean,
+  runtime: BrowserRuntime,
   recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<PreparedWorkdayWaitingState | PreparedWorkdaySafeState> {
-  const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, { navigate: false });
   recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
   await waitForWorkdayStablePage(runtime.page);
   recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
@@ -299,9 +299,10 @@ export async function runWorkdaySafePass(
   sessionId: string,
   session: ApplicationSession,
   isRetry: boolean,
+  runtime: BrowserRuntime,
   recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<ApplicationSession> {
-  const prepared = await prepareWorkdaySafeFields(sessionId, session, isRetry, recordDiagnostic);
+  const prepared = await prepareWorkdaySafeFields(sessionId, session, isRetry, runtime, recordDiagnostic);
   if ("waitingSession" in prepared) {
     return prepared.waitingSession;
   }

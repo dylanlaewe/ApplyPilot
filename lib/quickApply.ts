@@ -1,3 +1,5 @@
+import type { Page } from "playwright";
+
 import { appendAuditEntry, getApplicationSession, saveDetectedFields, updateApplicationSession } from "@/lib/applications";
 import { prepareDetectedFields, applyWaitingUpdate } from "@/lib/autofillPreparation";
 import { ensureApplicationOverlayForSession } from "@/lib/applicationOverlaySession";
@@ -16,7 +18,7 @@ import { createAuditEntry } from "@/lib/auditLog";
 import { writeGenericPassDiagnostic } from "@/lib/autofillDiagnostics";
 import { SAFE_AUTOFILL_THRESHOLD } from "@/lib/autofillRules";
 import { dismissCookieConsentIfPresent } from "@/lib/consentBarrier";
-import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
+import { fillField, launchBrowserSession, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 import { runWorkdaySafePass } from "@/lib/workdayStrategy";
@@ -31,10 +33,12 @@ function shouldAutofill(field: DetectedField) {
   );
 }
 
-async function runGenericAutofillPass(sessionId: string, session: ApplicationSession, isRetry: boolean) {
-  const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, {
-    navigate: false
-  });
+async function runGenericAutofillPass(
+  sessionId: string,
+  session: ApplicationSession,
+  isRetry: boolean,
+  runtime: BrowserRuntime
+) {
   recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
   await waitForPageReadiness(runtime.page);
   recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
@@ -199,6 +203,8 @@ export async function runAutofillPass(
   options: {
     trigger?: "manual" | "automatic";
     reuseOpenPage?: boolean;
+    preferredPage?: Page;
+    focusPage?: boolean;
   } = {}
 ): Promise<ApplicationSession> {
   const session = await getApplicationSession(sessionId);
@@ -228,7 +234,10 @@ export async function runAutofillPass(
   try {
     const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, sessionId, {
       navigate: false,
-      reuseOpenPage: options.reuseOpenPage ?? settings.applicationBehavior.reuseBrowserWindow
+      reuseOpenPage: options.reuseOpenPage ?? settings.applicationBehavior.reuseBrowserWindow,
+      preferredPage: options.preferredPage,
+      preferExplicitPage: options.trigger !== "automatic" && Boolean(options.preferredPage),
+      focusPage: options.focusPage ?? options.trigger !== "automatic"
     });
     await ensureApplicationTransitionCoordinator(sessionId, runtime.page);
     await ensureApplicationOverlayForSession(sessionId, runtime.page);
@@ -246,12 +255,12 @@ export async function runAutofillPass(
     recordApplicationTransitionEvent(sessionId, "strategy_resolved", `${strategy.strategyId}:${strategy.classificationReason}`);
 
     if (strategy.workdaySafeModeActive) {
-      const updatedSession = await runWorkdaySafePass(sessionId, session, isRetry);
+      const updatedSession = await runWorkdaySafePass(sessionId, session, isRetry, runtime);
       await noteApplicationPassSettled(sessionId, runtime.page, options.trigger ?? "manual");
       return updatedSession;
     }
 
-    const updatedSession = await runGenericAutofillPass(sessionId, session, isRetry);
+    const updatedSession = await runGenericAutofillPass(sessionId, session, isRetry, runtime);
     await noteApplicationPassSettled(sessionId, runtime.page, options.trigger ?? "manual");
     return updatedSession;
   } finally {

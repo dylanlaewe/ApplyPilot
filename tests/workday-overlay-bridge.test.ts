@@ -108,3 +108,40 @@ test("universal overlay does not duplicate itself and survives navigation", asyn
   assert.equal(await page.locator("#applypilot-overlay").count(), 1);
   assert.equal(await page.locator("#applypilot-overlay .summary-status").textContent(), "Ready");
 });
+
+test("overlay actions run on the page where the user clicked, not an older tab in the same context", async () => {
+  if (!browser) return test.skip(launchError?.message ?? "Playwright launch is unavailable in this sandboxed test environment.");
+  const context = await browser.newContext();
+  const pageA = await context.newPage();
+  const pageB = await context.newPage();
+
+  try {
+    await pageA.setContent("<html><body><main>Login barrier</main></body></html>");
+    await pageB.setContent("<html><body><main>Application form</main><input id=\"city\" aria-label=\"City\" /></body></html>");
+
+    const actions: string[] = [];
+    await registerApplicationOverlayBridge(pageA, async ({ page: sourcePage, action }) => {
+      const label = sourcePage === pageB ? "page-b" : sourcePage === pageA ? "page-a" : "unknown";
+      actions.push(`${label}:${action}`);
+      return {
+        ok: true,
+        status: "Finished",
+        message: `Handled on ${label}`
+      };
+    });
+
+    await ensureApplicationOverlay(pageA, "session-workday");
+    await ensureApplicationOverlay(pageB, "session-workday");
+
+    await pageB.locator("#applypilot-overlay summary").click();
+    await pageB.getByRole("button", { name: "Fill this page" }).click();
+    await pageB.waitForFunction(() => {
+      const result = document.querySelector("#applypilot-overlay .result");
+      return /Handled on page-b/.test(result?.textContent || "");
+    });
+
+    assert.deepEqual(actions, ["page-b:fill-page"]);
+  } finally {
+    await context.close();
+  }
+});

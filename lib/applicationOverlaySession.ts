@@ -295,7 +295,9 @@ export async function ensureApplicationOverlayForSession(sessionId: string, page
     const { runAutofillPass } = await import("@/lib/quickApply");
     const updatedSession = await runAutofillPass(targetSessionId, {
       trigger: "manual",
-      reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow
+      reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow,
+      preferredPage: page,
+      focusPage: false
     });
     return summarizeSession(updatedSession);
   });

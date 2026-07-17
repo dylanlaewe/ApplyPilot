@@ -4,7 +4,7 @@ import { detectAutomationAtsKind, toSessionAtsProvider } from "@/lib/atsStrategy
 import { FINAL_SUBMIT_PATTERNS } from "@/lib/autofillRules";
 import { verifyFilledValue } from "@/lib/answerVerification";
 import { evaluateVisibleFieldCandidates } from "@/lib/browserFieldScanner";
-import { focusSessionPage, getOrCreateBrowserContext, getOrCreateSessionPage, getSessionPage } from "@/lib/browserManager";
+import { getOrCreateBrowserContext, getOrCreateSessionPage, getSessionPage } from "@/lib/browserManager";
 import { fillAutocompleteControl, fillCustomCombobox, fillNativeSelect, fillWorkdaySelect } from "@/lib/controlAdapters";
 import { prepareLogicalFields } from "@/lib/fieldLabeling";
 import { matchBooleanOption, matchTextOption } from "@/lib/optionMatcher";
@@ -18,7 +18,7 @@ type FillVerificationError = Error & {
   actualValue?: string;
 };
 
-type BrowserRuntime = {
+export type BrowserRuntime = {
   browser: Browser;
   context: BrowserContext;
   page: Page;
@@ -94,16 +94,21 @@ export async function launchBrowserSession(
   options: {
     navigate?: boolean;
     reuseOpenPage?: boolean;
+    preferredPage?: Page;
+    preferExplicitPage?: boolean;
+    focusPage?: boolean;
   } = {}
 ) {
   const context = await getOrCreateBrowserContext();
   const page = await getOrCreateSessionPage(sessionId, {
     url,
     navigate: options.navigate,
-    reuseOpenPage: options.reuseOpenPage
+    reuseOpenPage: options.reuseOpenPage,
+    preferredPage: options.preferredPage,
+    preferExplicitPage: options.preferExplicitPage,
+    focus: options.focusPage
   });
   await installSubmissionGuard(page);
-  await focusSessionPage(sessionId);
 
   return { browser: context.browser() as Browser, context, page, sessionId };
 }

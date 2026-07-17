@@ -310,9 +310,17 @@ async function triggerAutomaticContinuation(sessionId: string, page: Page) {
     const { runAutofillPass } = await import("@/lib/quickApply");
     await runAutofillPass(sessionId, {
       trigger: "automatic",
-      reuseOpenPage: true
+      reuseOpenPage: true,
+      preferredPage: page,
+      focusPage: false
     });
     pushTransitionEvent(sessionId, "pass_finished", identity.signature);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    pushTransitionEvent(sessionId, "pass_failed", message);
+    if (!/session not found/i.test(message)) {
+      throw error;
+    }
   } finally {
     state.processing = false;
   }
