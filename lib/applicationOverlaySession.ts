@@ -15,6 +15,24 @@ import { getWorkdayBarrierStatusLabel } from "@/lib/workdayBarrier";
 import { resetWorkdayBarrierHistory } from "@/lib/workdaySafeMode";
 import { ApplicationSession, DetectedField } from "@/types";
 
+type OverlayFieldSummary = {
+  label: string;
+  status: string;
+  intent?: string;
+  target?: string;
+  current?: string;
+  source?: string;
+  controlType?: string;
+  reason?: string;
+};
+
+type OverlayUnresolvedSummary = OverlayFieldSummary & {
+  reason: string;
+};
+
+const GENERIC_OVERLAY_LABELS = [/^items selected$/i, /^select one$/i, /^choose one$/i];
+const OPTIONAL_DEBUG_ONLY_INTENTS = new Set(["phone_extension", "address_line_2"]);
+
 function sourceLabel(field: DetectedField) {
   switch (field.answerSource) {
     case "explicit_profile":
@@ -41,9 +59,31 @@ function controlTypeLabel(field: DetectedField) {
   return value.replace(/_/g, " ");
 }
 
-function statusLabel(field: DetectedField) {
+function displayIntent(field: DetectedField) {
+  return field.intent.replace(/_/g, " ");
+}
+
+function isGenericOverlayLabel(value: string) {
+  const label = value.trim();
+  return Boolean(label) && GENERIC_OVERLAY_LABELS.some((pattern) => pattern.test(label));
+}
+
+function bestOverlayLabel(field: DetectedField) {
+  for (const candidate of [field.label, field.questionText, field.nearbyText, field.name]) {
+    const cleaned = (candidate || "").trim();
+    if (!cleaned) continue;
+    if (isGenericOverlayLabel(cleaned)) continue;
+    return cleaned;
+  }
+  return (field.label || field.questionText || field.name || "Field").trim() || "Field";
+}
+
+function recognizedStatusLabel(field: DetectedField) {
   if (field.status === "filled" && field.verificationStatus === "verified") {
     return "Filled and verified";
+  }
+  if (field.status === "filled") {
+    return "Filled but unverified";
   }
   if (field.verificationStatus === "failed") {
     return "Attempt failed";
@@ -63,51 +103,92 @@ function statusLabel(field: DetectedField) {
   return "Detected";
 }
 
-function maskedFieldValue(field: DetectedField) {
-  const attempted = field.matchedOption || field.detectedValue || field.suggestedValue || "";
-  if (!attempted.trim()) {
-    return field.answerSource === "unknown" ? "No saved answer" : "No value attempted";
+function unresolvedStatusLabel(field: DetectedField) {
+  if (field.status === "sensitive") return "Sensitive manual review";
+  if (field.status === "unknown") return "Needs your answer";
+  if (field.verificationStatus === "failed" || field.status === "error") return "Attempt failed";
+  return "Needs review";
+}
+
+function maskedTargetValue(field: DetectedField) {
+  const target = field.matchedOption || field.suggestedValue || "";
+  if (!target.trim()) {
+    return field.answerSource === "unknown" ? "" : "No saved answer";
   }
   if (field.sensitivity === "sensitive") {
     return field.verificationStatus === "verified" ? "Sensitive answer verified" : "Sensitive answer available";
   }
-  return attempted.length > 80 ? `${attempted.slice(0, 77)}...` : attempted;
+  return target.length > 80 ? `${target.slice(0, 77)}...` : target;
 }
 
-function recognizedFields(fields: DetectedField[]) {
-  return fields
-    .filter(
-      (field) =>
-        field.verificationStatus !== "not_attempted" ||
-        field.status === "filled" ||
-        Boolean(field.suggestedValue.trim()) ||
-        field.answerSource !== "unknown"
-    )
-    .map((field) => ({
-      label: field.label || field.questionText || field.name || "Field",
-      status: statusLabel(field),
-      intent: field.intent.replace(/_/g, " "),
-      value: maskedFieldValue(field),
-      source: sourceLabel(field),
-      controlType: controlTypeLabel(field)
-    }));
+function currentFieldValue(field: DetectedField) {
+  const current = (field.detectedValue || "").trim();
+  if (!current) return "";
+  return current.length > 80 ? `${current.slice(0, 77)}...` : current;
 }
 
-function unresolvedFields(fields: DetectedField[]) {
-  return fields
-    .filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
-    .map((field) => ({
-      label: field.label || field.questionText || field.name || "Field",
-      reason:
-        field.status === "sensitive"
-          ? "This is a sensitive question."
-          : field.status === "error"
-            ? "This control needs manual review."
-            : field.reason,
-      status: field.status === "unknown" ? "Needs your answer" : field.status.replace(/_/g, " "),
-      controlType: controlTypeLabel(field),
-      source: field.sensitivity === "sensitive" ? "Sensitive" : field.isRequired ? "Required" : "Optional"
-    }));
+function shouldHideOverlayField(field: DetectedField) {
+  if (OPTIONAL_DEBUG_ONLY_INTENTS.has(field.intent) && !field.isRequired && !field.suggestedValue.trim() && !field.detectedValue.trim()) {
+    return true;
+  }
+
+  return isGenericOverlayLabel((field.label || "").trim()) || isGenericOverlayLabel(bestOverlayLabel(field));
+}
+
+function unresolvedReason(field: DetectedField) {
+  if (field.status === "sensitive") return "This is a sensitive question.";
+  if (field.status === "error") return field.verificationMessage || "This control needs manual review.";
+  return field.reason;
+}
+
+function buildOverlayFieldSummary(field: DetectedField): OverlayFieldSummary {
+  return {
+    label: bestOverlayLabel(field),
+    status: recognizedStatusLabel(field),
+    intent: displayIntent(field),
+    target: maskedTargetValue(field) || undefined,
+    current: currentFieldValue(field) || undefined,
+    source: sourceLabel(field),
+    controlType: controlTypeLabel(field),
+    reason: unresolvedReason(field)
+  };
+}
+
+export function buildOverlayFieldBuckets(fields: DetectedField[]) {
+  const visibleFields = fields.filter((field) => !shouldHideOverlayField(field));
+  const recognized: OverlayFieldSummary[] = [];
+  const unresolved: OverlayUnresolvedSummary[] = [];
+
+  for (const field of visibleFields) {
+    const summary = buildOverlayFieldSummary(field);
+    const needsManualReview =
+      field.status === "needs_review" ||
+      field.status === "sensitive" ||
+      field.status === "unknown" ||
+      field.status === "error";
+    const attemptedButFailed = field.verificationStatus === "failed";
+
+    if (needsManualReview && !attemptedButFailed) {
+      unresolved.push({
+        ...summary,
+        status: unresolvedStatusLabel(field),
+        reason: unresolvedReason(field) || "This field still needs your review."
+      });
+      continue;
+    }
+
+    if (
+      field.status === "filled" ||
+      field.verificationStatus === "verified" ||
+      field.verificationStatus === "failed" ||
+      Boolean(field.suggestedValue.trim()) ||
+      field.answerSource !== "unknown"
+    ) {
+      recognized.push(summary);
+    }
+  }
+
+  return { recognized, unresolved };
 }
 
 function overlayStatusLabel(session: ApplicationSession) {
@@ -135,12 +216,13 @@ function overlayStatusLabel(session: ApplicationSession) {
 
 function summarizeSession(session: ApplicationSession, options?: { resumeUploaded?: boolean }) {
   if (session.status === "waiting_for_user") {
+    const overlayFields = buildOverlayFieldBuckets(session.detectedFields);
     return {
       ok: true,
       status: overlayStatusLabel(session),
       message: session.nextAction || session.statusMessage || "ApplyPilot is waiting for the next safe step on this page.",
-      recognized: recognizedFields(session.detectedFields),
-      unresolved: []
+      recognized: overlayFields.recognized,
+      unresolved: overlayFields.unresolved
     } satisfies ApplicationOverlayActionResult;
   }
 
@@ -155,12 +237,13 @@ function summarizeSession(session: ApplicationSession, options?: { resumeUploade
     summaryParts.push("Ready for review");
   }
 
+  const overlayFields = buildOverlayFieldBuckets(session.detectedFields);
   return {
     ok: true,
     status: overlayStatusLabel(session),
     message: summaryParts.join(" / "),
-    recognized: recognizedFields(session.detectedFields),
-    unresolved: unresolvedFields(session.detectedFields)
+    recognized: overlayFields.recognized,
+    unresolved: overlayFields.unresolved
   } satisfies ApplicationOverlayActionResult;
 }
 
@@ -184,6 +267,7 @@ async function reviewCurrentPage(sessionId: string, session: ApplicationSession,
   await waitForPageReadiness(page);
   const prepared = await prepareDetectedFields(sessionId, page, session);
   if (prepared.waiting) {
+    const overlayFields = buildOverlayFieldBuckets(session.detectedFields);
     return {
       ok: true,
       status:
@@ -193,8 +277,8 @@ async function reviewCurrentPage(sessionId: string, session: ApplicationSession,
             ? "Login required"
             : "Waiting for the page",
       message: prepared.waiting.nextAction,
-      recognized: recognizedFields(session.detectedFields),
-      unresolved: []
+      recognized: overlayFields.recognized,
+      unresolved: overlayFields.unresolved
     } satisfies ApplicationOverlayActionResult;
   }
 
@@ -206,14 +290,15 @@ async function reviewCurrentPage(sessionId: string, session: ApplicationSession,
     page.url()
   );
 
+  const overlayFields = buildOverlayFieldBuckets(nextSession.detectedFields);
   return {
     ok: true,
-    status: unresolvedFields(nextSession.detectedFields).length ? "Needs your review" : "Ready",
-    message: unresolvedFields(nextSession.detectedFields).length
-      ? `${unresolvedFields(nextSession.detectedFields).length} field${unresolvedFields(nextSession.detectedFields).length === 1 ? "" : "s"} still need your attention.`
+    status: overlayFields.unresolved.length ? "Needs your review" : "Ready",
+    message: overlayFields.unresolved.length
+      ? `${overlayFields.unresolved.length} field${overlayFields.unresolved.length === 1 ? "" : "s"} still need your attention.`
       : "No unresolved fields on this page right now.",
-    recognized: recognizedFields(nextSession.detectedFields),
-    unresolved: unresolvedFields(nextSession.detectedFields)
+    recognized: overlayFields.recognized,
+    unresolved: overlayFields.unresolved
   } satisfies ApplicationOverlayActionResult;
 }
 
@@ -221,6 +306,7 @@ async function uploadResumeForCurrentPage(sessionId: string, session: Applicatio
   await waitForPageReadiness(page);
   const prepared = await prepareDetectedFields(sessionId, page, session);
   if (prepared.waiting) {
+    const overlayFields = buildOverlayFieldBuckets(session.detectedFields);
     return {
       ok: true,
       status:
@@ -228,28 +314,30 @@ async function uploadResumeForCurrentPage(sessionId: string, session: Applicatio
           ? getWorkdayBarrierStatusLabel(prepared.workdayBarrier.kind)
           : "Waiting for the page",
       message: prepared.waiting.nextAction,
-      recognized: recognizedFields(session.detectedFields),
-      unresolved: []
+      recognized: overlayFields.recognized,
+      unresolved: overlayFields.unresolved
     } satisfies ApplicationOverlayActionResult;
   }
 
   const resumeField = prepared.detectedFields.find((field) => field.intent === "resume_upload");
   if (!resumeField) {
+    const overlayFields = buildOverlayFieldBuckets(prepared.detectedFields);
     return {
       ok: true,
       status: "Ready",
       message: "No resume upload is needed on this page.",
-      recognized: recognizedFields(prepared.detectedFields),
-      unresolved: unresolvedFields(prepared.detectedFields)
+      recognized: overlayFields.recognized,
+      unresolved: overlayFields.unresolved
     } satisfies ApplicationOverlayActionResult;
   }
 
   if (!resumeField.suggestedValue.trim()) {
+    const overlayFields = buildOverlayFieldBuckets(prepared.detectedFields);
     return {
       ok: true,
       status: "Needs your review",
       message: "Resume needs your attention. ApplyPilot could not verify a local resume for this field.",
-      recognized: recognizedFields(prepared.detectedFields),
+      recognized: overlayFields.recognized,
       unresolved: [{ label: resumeField.label || "Resume", reason: "Resume upload was not confirmed." }]
     } satisfies ApplicationOverlayActionResult;
   }
@@ -301,7 +389,7 @@ async function uploadResumeForCurrentPage(sessionId: string, session: Applicatio
       ok: true,
       status: "Needs your review",
       message: "Resume needs your attention. Try again or upload it manually.",
-      recognized: recognizedFields(prepared.detectedFields),
+      recognized: buildOverlayFieldBuckets(prepared.detectedFields).recognized,
       unresolved: [{ label: resumeField.label || "Resume", reason: "Resume upload was not confirmed." }]
     } satisfies ApplicationOverlayActionResult;
   }

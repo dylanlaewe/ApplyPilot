@@ -15,10 +15,12 @@ export type ApplicationOverlayActionResult = {
     label: string;
     status: string;
     intent?: string;
-    value?: string;
+    target?: string;
+    current?: string;
     source?: string;
     controlType?: string;
     timing?: string;
+    reason?: string;
   }>;
   unresolved?: Array<{
     label: string;
@@ -26,6 +28,9 @@ export type ApplicationOverlayActionResult = {
     status?: string;
     source?: string;
     controlType?: string;
+    intent?: string;
+    target?: string;
+    current?: string;
   }>;
 };
 
@@ -470,7 +475,8 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
         const metaParts = [
           item.status ? "Status: " + item.status : "",
           item.intent ? "Intent: " + item.intent : "",
-          item.value ? "Value: " + item.value : "",
+          item.target ? "Target: " + item.target : "",
+          item.current ? "Current: " + item.current : "",
           item.source ? "Source: " + item.source : "",
           item.controlType ? "Control: " + item.controlType : "",
           item.timing ? "Timing: " + item.timing : "",
