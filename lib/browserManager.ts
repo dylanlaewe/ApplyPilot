@@ -122,6 +122,14 @@ async function disposeClosedPages() {
   }
 }
 
+function dropPageFromOtherSessions(sessionId: string, page: Page) {
+  for (const [trackedSessionId, trackedPage] of state.pages.entries()) {
+    if (trackedSessionId !== sessionId && trackedPage === page) {
+      state.pages.delete(trackedSessionId);
+    }
+  }
+}
+
 export async function getOrCreateBrowserContext() {
   await disposeClosedPages();
 
@@ -236,6 +244,17 @@ export async function getOrCreateSessionPage(
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
   }
 
+  return page;
+}
+
+export function bindSessionPage(sessionId: string, page: Page) {
+  if (page.isClosed()) {
+    state.pages.delete(sessionId);
+    return null;
+  }
+
+  dropPageFromOtherSessions(sessionId, page);
+  state.pages.set(sessionId, page);
   return page;
 }
 

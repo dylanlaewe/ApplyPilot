@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  bindSessionPage,
   clearPersistentProfileSingletonArtifacts,
   getOpenSessionCount,
   getOrCreateBrowserContext,
@@ -53,6 +54,26 @@ test("browser manager can reuse an open page for a different session when reques
   assert.equal(firstPage, reusedPage);
   assert.equal(getOpenSessionCount(), 1);
   assert.match(await reusedPage.title(), /Two/i);
+
+  await resetBrowserManagerForTests();
+});
+
+test("browser manager can rebind a session to the page the user is actively using", async () => {
+  await resetBrowserManagerForTests();
+
+  const originalPage = await getOrCreateSessionPage("session-rebind", {
+    url: "data:text/html,<title>Original</title><h1>Original</h1>"
+  });
+  const context = await getOrCreateBrowserContext();
+  const applicationPage = await context.newPage();
+  await applicationPage.goto("data:text/html,<title>Application</title><h1>Application</h1>", { waitUntil: "domcontentloaded" });
+
+  const reboundPage = bindSessionPage("session-rebind", applicationPage);
+  const resolvedPage = await getOrCreateSessionPage("session-rebind", { navigate: false });
+
+  assert.equal(reboundPage, applicationPage);
+  assert.equal(resolvedPage, applicationPage);
+  assert.notEqual(resolvedPage, originalPage);
 
   await resetBrowserManagerForTests();
 });

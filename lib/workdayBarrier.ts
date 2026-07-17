@@ -54,6 +54,7 @@ const EMAIL_VERIFICATION_PATTERNS = [/verify email/i, /verification email/i, /co
 const VERIFICATION_CODE_PATTERNS = [/verification code/i, /enter code/i, /one-?time code/i, /security code/i];
 const MFA_PATTERNS = [/multi-?factor/i, /two-?factor/i, /authenticator/i, /authentication code/i];
 const TERMS_PATTERNS = [/terms and conditions/i, /i agree/i, /acknowledge/i, /legal acknowledgement/i];
+const OVERLAY_ROOT_SELECTOR = "#applypilot-overlay, #applypilot-workday-overlay";
 const APPLY_START_PATTERNS = [
   /current step 1 of \d+/i,
   /back to job posting/i,
@@ -73,6 +74,8 @@ const APPLICATION_FORM_PATTERNS = [
   /work authorization/i,
   /sponsorship/i
 ];
+const APPLICATION_FLOW_PATTERNS = [/back to job posting/i, /current step \d+ of \d+/i, /step \d+ of \d+/i];
+const APPLICATION_STEP_PATTERNS = [/my information/i, /my experience/i, /application questions/i, /voluntary disclosures/i, /self identify/i, /review/i];
 const SEARCH_PAGE_PATTERNS = [/search for jobs/i, /careers home/i, /jobs found/i, /search filters/i, /introduce yourself/i];
 const ACCOUNT_ASSIST_FIELD_PATTERNS = [
   /first name/i,
@@ -86,6 +89,10 @@ const ACCOUNT_ASSIST_FIELD_PATTERNS = [
 
 function hasPattern(patterns: RegExp[], text: string) {
   return patterns.some((pattern) => pattern.test(text));
+}
+
+function countPatternMatches(patterns: RegExp[], text: string) {
+  return patterns.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
 }
 
 function buildBarrierMessage(kind: WorkdayBarrierKind, accountAssistAllowed: boolean) {
@@ -180,6 +187,23 @@ export function classifyWorkdayBarrierSnapshot(
     !hasVerificationCodeField &&
     !hasStructuredAccountSetupFields &&
     !visibleApplicationInputs.length;
+  const applyFlowMatchCount = countPatternMatches(APPLICATION_FLOW_PATTERNS, combined);
+  const applicationStepMatchCount = countPatternMatches(APPLICATION_STEP_PATTERNS, combined);
+  const hasApplicationPath = /\/apply(?:\/|$)/i.test(snapshot.url);
+  const hasStrongFormEvidence =
+    !hasPasswordField &&
+    !hasVerificationCodeField &&
+    (
+      visibleApplicationInputs.length >= 2 ||
+      (
+        hasApplicationPath &&
+        (
+          hasPattern(APPLICATION_FORM_PATTERNS, combined) ||
+          (applyFlowMatchCount >= 2 && applicationStepMatchCount >= 2) ||
+          (applyFlowMatchCount >= 1 && applicationStepMatchCount >= 3)
+        )
+      )
+    );
 
   let kind: WorkdayBarrierKind = "unknown_barrier";
   let reason = "The page did not expose a safe, recognized application-form state yet.";
@@ -188,6 +212,9 @@ export function classifyWorkdayBarrierSnapshot(
   if (unavailable) {
     kind = "site_unavailable";
     reason = `Matched unavailable text: ${unavailable}`;
+  } else if (hasStrongFormEvidence) {
+    kind = "form_reached";
+    reason = "Visible Workday application-form evidence overrides any stale login or verification copy.";
   } else if (options.captchaDetection?.status === "confirmed_visible_challenge" || /captcha|i'm not a robot|robot check/i.test(combined)) {
     kind = "captcha_required";
     reason = "A visible CAPTCHA or human-verification prompt is present.";
@@ -237,38 +264,45 @@ export async function detectWorkdayBarrier(
     captchaDetection?: Pick<CaptchaDetectionResult, "status">;
   } = {}
 ) {
-  const snapshot = await page.evaluate(() => {
+  const snapshot = await page.evaluate((overlaySelector) => {
+    const clean = (value = "") => value.replace(/\s+/g, " ").trim();
+    const isVisible = (element: Element | null) => {
+      if (!(element instanceof HTMLElement)) return false;
+      if (element.closest(overlaySelector)) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+    const bodyTextParts = Array.from(
+      document.querySelectorAll(
+        "main, form, section, fieldset, legend, h1, h2, h3, h4, h5, label, p, li, [role='group'], [role='radiogroup'], [role='combobox'], [data-automation-id]"
+      )
+    )
+      .filter((element) => isVisible(element))
+      .map((element) => clean(element.textContent || ""))
+      .filter(Boolean);
+
     return {
       url: window.location.href,
       hostname: window.location.hostname,
-      title: (document.title || "").replace(/\s+/g, " ").trim(),
+      title: clean(document.title || ""),
       heading: (
         document.querySelector("h1, [data-automation-id='pageHeader'], [data-automation-id='formTitle'], [data-automation-id='titleText']")?.textContent || ""
       )
         .replace(/\s+/g, " ")
         .trim(),
-      bodyText: (document.body.innerText || "").replace(/\s+/g, " ").trim(),
+      bodyText: clean(bodyTextParts.join(" ")),
       buttons: Array.from(document.querySelectorAll("button, a, [role='button']"))
-        .filter((element) => {
-          if (!(element instanceof HTMLElement)) return false;
-          const style = window.getComputedStyle(element);
-          const rect = element.getBoundingClientRect();
-          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-        })
-        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((element) => isVisible(element))
+        .map((element) => clean(element.textContent || ""))
         .filter(Boolean)
         .slice(0, 30),
       visibleInputs: Array.from(document.querySelectorAll("input, textarea, select"))
-        .filter((element) => {
-          if (!(element instanceof HTMLElement)) return false;
-          const style = window.getComputedStyle(element);
-          const rect = element.getBoundingClientRect();
-          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-        })
+        .filter((element) => isVisible(element))
         .map((element) => ({
-          type: (element.getAttribute("type") || element.tagName.toLowerCase()).replace(/\s+/g, " ").trim(),
-          name: (element.getAttribute("name") || "").replace(/\s+/g, " ").trim(),
-          id: (element.getAttribute("id") || "").replace(/\s+/g, " ").trim(),
+          type: clean(element.getAttribute("type") || element.tagName.toLowerCase()),
+          name: clean(element.getAttribute("name") || ""),
+          id: clean(element.getAttribute("id") || ""),
           label: (() => {
             const id = element.getAttribute("id");
             const explicit = id ? document.querySelector(`label[for="${id}"]`) : null;
@@ -286,10 +320,10 @@ export async function detectWorkdayBarrier(
               .replace(/\s+/g, " ")
               .trim();
           })(),
-          autocomplete: (element.getAttribute("autocomplete") || "").replace(/\s+/g, " ").trim()
+          autocomplete: clean(element.getAttribute("autocomplete") || "")
         }))
     } satisfies WorkdayBarrierSnapshot;
-  });
+  }, OVERLAY_ROOT_SELECTOR);
 
   return classifyWorkdayBarrierSnapshot(snapshot, options);
 }

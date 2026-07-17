@@ -161,6 +161,45 @@ test("Workday barrier classifier detects verification, captcha, MFA, and form st
   assert.equal(formReached.formReached, true);
 });
 
+test("Workday barrier classifier clears stale MFA and login copy once the real application form is visible", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      url: "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/job/Wilbour-Hall/Administrative-Coordinator_REQ210155/apply/applyManually",
+      heading: "My Information",
+      bodyText:
+        "MFA required My Information Back to Job Posting Current Step 3 of 7 My Experience Application Questions Voluntary Disclosures Self Identify Review How Did You Hear About Us? Prior affiliation with Brown University? Country",
+      buttons: ["Back to Job Posting"],
+      visibleInputs: [
+        { type: "select-one", name: "heard_about", id: "heard_about", label: "How Did You Hear About Us?", autocomplete: "" },
+        { type: "radio", name: "prior_affiliation", id: "prior_affiliation_yes", label: "Prior affiliation with Brown University?", autocomplete: "" },
+        { type: "select-one", name: "country", id: "country", label: "Country", autocomplete: "country" }
+      ]
+    })
+  );
+
+  assert.equal(result.kind, "form_reached");
+  assert.equal(result.formReached, true);
+  assert.match(result.reason, /overrides any stale login or verification copy/i);
+});
+
+test("Workday barrier classifier clears stale account-creation copy when application-form evidence wins", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply/applyManually",
+      heading: "My Information",
+      bodyText:
+        "Create Account My Information Back to Job Posting Current Step 3 of 7 My Experience Application Questions Review Country City",
+      buttons: ["Back to Job Posting"],
+      visibleInputs: [
+        { type: "select-one", name: "country", id: "country", label: "Country", autocomplete: "country" },
+        { type: "text", name: "city", id: "city", label: "City", autocomplete: "address-level2" }
+      ]
+    })
+  );
+
+  assert.equal(result.kind, "form_reached");
+});
+
 test("Workday account assist only keeps safe name and email fields and leaves passwords untouched", () => {
   const fields = prepareWorkdayAccountAssistFields([
     field({ label: "First Name", name: "first_name", intent: "first_name", suggestedValue: "Avery" }),

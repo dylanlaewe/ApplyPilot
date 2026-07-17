@@ -11,6 +11,8 @@ import { createDefaultProfile, saveApplicantProfile } from "@/lib/profile";
 import { runAutofillPass } from "@/lib/quickApply";
 import { getDataDirPath, getStorageFilePath } from "@/lib/storage";
 
+Object.assign(process.env, { NODE_ENV: "test" });
+
 const storageFiles = ["application-sessions.json", "answer-bank.json", "profile.json"] as const;
 const backups = new Map<string, string | null>();
 

@@ -5,6 +5,7 @@ import { ensureApplicationOverlay, registerApplicationOverlayBridge, type Applic
 import { ensureApplicationTransitionCoordinator } from "@/lib/applicationTransitionCoordinator";
 import { prepareDetectedFields } from "@/lib/autofillPreparation";
 import { createAuditEntry } from "@/lib/auditLog";
+import { bindSessionPage } from "@/lib/browserManager";
 import { submitCorrectionReport } from "@/lib/corrections";
 import { fillField, launchBrowserSession, waitForPageReadiness } from "@/lib/playwrightSession";
 import { humanizeError } from "@/lib/safety";
@@ -215,8 +216,10 @@ async function uploadResumeForCurrentPage(sessionId: string, session: Applicatio
 
 export async function ensureApplicationOverlayForSession(sessionId: string, page: Page) {
   const settings = await getSettings();
+  bindSessionPage(sessionId, page);
 
   await registerApplicationOverlayBridge(page, async ({ sessionId: targetSessionId, action, correction }) => {
+    bindSessionPage(targetSessionId, page);
     const currentSession = await getApplicationSession(targetSessionId);
     if (!currentSession) {
       return {
