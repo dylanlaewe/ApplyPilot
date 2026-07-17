@@ -1,4 +1,5 @@
 import { SAFE_AUTOFILL_THRESHOLD } from "@/lib/autofillRules";
+import { US_STATE_OPTIONS } from "@/lib/locationCatalog";
 import { normalizeText } from "@/lib/utils";
 import { ApplicationSession, DetectedField, FieldIntent } from "@/types";
 
@@ -89,7 +90,7 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
   "previous_employment"
 ]);
 
-const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country"]);
+const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country", "state", "phone_country_code"]);
 
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "work_authorization",
@@ -123,6 +124,10 @@ const WORKDAY_UNSUPPORTED_CONTROL_TYPES = new Set([
 
 const WORKDAY_COUNTRY_ALIASES: Record<string, string[]> = {
   US: ["United States", "United States of America", "USA", "U.S.", "U.S.A.", "US"]
+};
+
+const WORKDAY_PHONE_COUNTRY_CODE_ALIASES: Record<string, string[]> = {
+  US: ["+1", "United States (+1)", "United States +1", "USA (+1)", "USA +1", "US (+1)", "US +1"]
 };
 
 const workdayStateStore = globalThis as typeof globalThis & {
@@ -257,6 +262,64 @@ export function matchExactCountryAliasOption(options: string[], candidate: strin
   return null;
 }
 
+function normalizeStateAlias(value: string) {
+  return normalizeText(value).replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function matchExactStateAliasOption(options: string[], candidate: string) {
+  const normalizedCandidate = normalizeStateAlias(candidate);
+  const state = US_STATE_OPTIONS.find(
+    (option) => normalizeStateAlias(option.code) === normalizedCandidate || normalizeStateAlias(option.name) === normalizedCandidate
+  );
+
+  if (!state) {
+    return null;
+  }
+
+  const approvedAliases = [state.code, state.name].map(normalizeStateAlias);
+  for (const option of options) {
+    if (approvedAliases.includes(normalizeStateAlias(option))) {
+      return {
+        option,
+        confidence: 0.99,
+        reason: "Matched an approved state alias exactly."
+      };
+    }
+  }
+
+  return null;
+}
+
+function normalizePhoneCountryCodeAlias(value: string) {
+  return normalizeText(value).replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function matchExactPhoneCountryCodeOption(options: string[], candidate: string) {
+  const normalizedCandidate = normalizePhoneCountryCodeAlias(candidate);
+  const canonicalCode =
+    Object.entries(WORKDAY_PHONE_COUNTRY_CODE_ALIASES).find(([, aliases]) =>
+      aliases.some((alias) => normalizePhoneCountryCodeAlias(alias) === normalizedCandidate)
+    )?.[0] ?? "";
+
+  if (!canonicalCode) {
+    return null;
+  }
+
+  const approvedAliases = WORKDAY_PHONE_COUNTRY_CODE_ALIASES[canonicalCode].map(normalizePhoneCountryCodeAlias);
+  for (const option of options) {
+    if (approvedAliases.includes(normalizePhoneCountryCodeAlias(option))) {
+      return {
+        option,
+        confidence: 0.99,
+        canonicalCode,
+        reason: "Matched an approved phone country code option exactly."
+      };
+    }
+  }
+
+  return null;
+}
+
 function clearFieldForManualReview(field: DetectedField, reason: string, status: DetectedField["status"] = "needs_review") {
   field.status = status;
   field.reason = reason;
@@ -338,6 +401,28 @@ export function applyWorkdaySafeModeRules(
           next.matchedOption = exactCountryMatch.option;
         }
         return next;
+      }
+    }
+
+    if (next.intent === "state") {
+      const exactStateMatch = matchExactStateAliasOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
+      if (isFillableWorkdaySelectControl(next)) {
+        if (!exactStateMatch) {
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          return next;
+        }
+        next.matchedOption = exactStateMatch.option;
+      }
+    }
+
+    if (next.intent === "phone_country_code") {
+      const exactPhoneCodeMatch = matchExactPhoneCountryCodeOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
+      if (isFillableWorkdaySelectControl(next)) {
+        if (!exactPhoneCodeMatch) {
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          return next;
+        }
+        next.matchedOption = exactPhoneCodeMatch.option;
       }
     }
 

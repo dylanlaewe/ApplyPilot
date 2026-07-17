@@ -10,6 +10,8 @@ import {
   completeWorkdayPass,
   executeWorkdayFillPlan,
   failWorkdayPass,
+  matchExactPhoneCountryCodeOption,
+  matchExactStateAliasOption,
   getWorkdaySafeModeState,
   matchExactCountryAliasOption,
   resumeWorkdaySafeMode,
@@ -111,6 +113,28 @@ test("country matching uses only exact approved aliases", () => {
   assert.equal(rejected, null);
 });
 
+test("state matching uses only exact approved aliases", () => {
+  const match = matchExactStateAliasOption(["Massachusetts", "New York"], "MA");
+  assert.equal(match?.option, "Massachusetts");
+
+  const codeMatch = matchExactStateAliasOption(["MA", "NY"], "Massachusetts");
+  assert.equal(codeMatch?.option, "MA");
+
+  const rejected = matchExactStateAliasOption(["Marshall Islands", "Maine"], "MA");
+  assert.equal(rejected, null);
+});
+
+test("phone country code matching only accepts exact approved US options", () => {
+  const plusOne = matchExactPhoneCountryCodeOption(["+1", "+44"], "+1");
+  assert.equal(plusOne?.option, "+1");
+
+  const countryLabel = matchExactPhoneCountryCodeOption(["Canada (+1)", "United States (+1)"], "United States (+1)");
+  assert.equal(countryLabel?.option, "United States (+1)");
+
+  const rejected = matchExactPhoneCountryCodeOption(["U.S. Virgin Islands (+1)", "Canada (+1)"], "United States (+1)");
+  assert.equal(rejected, null);
+});
+
 test("high-risk Workday fields fail closed and exact country dropdowns stay eligible", () => {
   const [country, veteran, sponsorship, workAuthorization] = applyWorkdaySafeModeRules([
     field({
@@ -182,6 +206,53 @@ test("Workday country dropdowns remain manual when no exact safe option exists",
   assert.equal(country.suggestedValue, "");
   assert.equal(country.reason, "Needs an exact dropdown mapping");
   assert.equal(country.matchedOption, undefined);
+});
+
+test("Workday state and phone country code dropdowns stay eligible only with exact safe matches", () => {
+  const [state, phoneCountryCode] = applyWorkdaySafeModeRules([
+    field({
+      label: "State",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "state",
+      suggestedValue: "MA",
+      selectOptions: ["Massachusetts", "New York"]
+    }),
+    field({
+      label: "Country Phone Code",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "phone_country_code",
+      suggestedValue: "United States (+1)",
+      selectOptions: ["Canada (+1)", "United States (+1)"]
+    })
+  ]);
+
+  assert.equal(state.status, "needs_review");
+  assert.match(state.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(state.matchedOption, "Massachusetts");
+
+  assert.equal(phoneCountryCode.status, "needs_review");
+  assert.match(phoneCountryCode.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(phoneCountryCode.matchedOption, "United States (+1)");
+});
+
+test("Workday phone country code dropdowns stay manual when only unsafe +1 variants exist", () => {
+  const [phoneCountryCode] = applyWorkdaySafeModeRules([
+    field({
+      label: "Country Phone Code",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "phone_country_code",
+      suggestedValue: "United States (+1)",
+      selectOptions: ["Canada (+1)", "U.S. Virgin Islands (+1)"]
+    })
+  ]);
+
+  assert.equal(phoneCountryCode.status, "needs_review");
+  assert.equal(phoneCountryCode.suggestedValue, "");
+  assert.equal(phoneCountryCode.reason, "Needs an exact dropdown mapping");
+  assert.equal(phoneCountryCode.matchedOption, undefined);
 });
 
 test("repeatable sections stay manual only when Workday cannot safely map the visible entry", () => {
