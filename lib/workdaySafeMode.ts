@@ -130,6 +130,14 @@ const WORKDAY_PHONE_COUNTRY_CODE_ALIASES: Record<string, string[]> = {
   US: ["+1", "United States (+1)", "United States +1", "USA (+1)", "USA +1", "US (+1)", "US +1"]
 };
 
+const WORKDAY_SAVED_TEXTAREA_SOURCES = new Set<string>([
+  "explicit_profile",
+  "derived_profile",
+  "formatted_profile",
+  "answer_bank",
+  "manual_user_answer"
+]);
+
 const workdayStateStore = globalThis as typeof globalThis & {
   __applyPilotWorkdaySafeMode?: Map<string, WorkdaySafeModeState>;
 };
@@ -345,6 +353,16 @@ function isFillableWorkdayTextControl(field: DetectedField) {
   return true;
 }
 
+function isEligibleWorkdayTextareaControl(field: DetectedField) {
+  return (
+    field.type === "textarea" &&
+    WORKDAY_SAVED_TEXTAREA_SOURCES.has(field.answerSource) &&
+    Boolean(field.suggestedValue.trim()) &&
+    field.autoFillAllowed &&
+    field.confidence >= SAFE_AUTOFILL_THRESHOLD
+  );
+}
+
 function isFillableWorkdaySelectControl(field: DetectedField) {
   return (
     ["native_select", "aria_combobox", "autocomplete", "listbox", "menu_button", "custom_select"].includes(field.controlType || "") ||
@@ -360,6 +378,10 @@ function isEligibleWorkdaySafeField(field: DetectedField) {
   }
 
   if (WORKDAY_SAFE_TEXT_INTENTS.has(field.intent) && isFillableWorkdayTextControl(field)) {
+    return true;
+  }
+
+  if (isEligibleWorkdayTextareaControl(field)) {
     return true;
   }
 
@@ -433,6 +455,16 @@ export function applyWorkdaySafeModeRules(
 
     if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
       clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+      return next;
+    }
+
+    if (next.type === "textarea") {
+      if (isEligibleWorkdayTextareaControl(next)) {
+        next.status = "needs_review";
+        next.reason = `${next.reason} Safe to autofill on this Workday page.`;
+        return next;
+      }
+      clearFieldForManualReview(next, "No saved answer yet");
       return next;
     }
 

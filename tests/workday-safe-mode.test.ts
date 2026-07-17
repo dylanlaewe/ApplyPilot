@@ -255,6 +255,51 @@ test("Workday phone country code dropdowns stay manual when only unsafe +1 varia
   assert.equal(phoneCountryCode.matchedOption, undefined);
 });
 
+test("saved Workday textarea answers stay eligible for a safe pass", () => {
+  const [textarea] = applyWorkdaySafeModeRules([
+    field({
+      label: "Why are you leaving your current role?",
+      type: "textarea",
+      controlType: "textarea",
+      intent: "unknown",
+      suggestedValue: "I am looking for a role with stronger mission alignment.",
+      answerSource: "answer_bank"
+    })
+  ]);
+
+  assert.equal(textarea.status, "needs_review");
+  assert.match(textarea.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(textarea.suggestedValue, "I am looking for a role with stronger mission alignment.");
+});
+
+test("generated or missing Workday textarea answers stay manual with a clear saved-answer reason", () => {
+  const [generated, missing] = applyWorkdaySafeModeRules([
+    field({
+      label: "Reason for leaving",
+      type: "textarea",
+      controlType: "textarea",
+      intent: "unknown",
+      suggestedValue: "Generated draft answer",
+      answerSource: "generated_answer"
+    }),
+    field({
+      label: "Additional certifications",
+      type: "textarea",
+      controlType: "textarea",
+      intent: "unknown",
+      suggestedValue: "",
+      answerSource: "unknown"
+    })
+  ]);
+
+  assert.equal(generated.status, "needs_review");
+  assert.equal(generated.reason, "No saved answer yet");
+  assert.equal(generated.suggestedValue, "");
+
+  assert.equal(missing.status, "needs_review");
+  assert.equal(missing.reason, "No saved answer yet");
+});
+
 test("repeatable sections stay manual only when Workday cannot safely map the visible entry", () => {
   const [resume, education, experience, degree] = applyWorkdaySafeModeRules([
     field({ intent: "resume_upload", type: "file", suggestedValue: "/tmp/resume.pdf" }),
