@@ -175,6 +175,12 @@ export function resumeWorkdaySafeMode(sessionId: string) {
   return state;
 }
 
+export function resetWorkdayBarrierHistory(sessionId: string) {
+  const state = getWorkdaySafeModeState(sessionId);
+  state.lastBarrierKind = "";
+  return state;
+}
+
 export function beginWorkdayPass(sessionId: string, pageIdentity: string) {
   const state = getWorkdaySafeModeState(sessionId);
   if (state.stopped) {

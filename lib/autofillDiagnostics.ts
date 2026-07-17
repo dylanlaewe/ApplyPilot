@@ -29,6 +29,8 @@ type WorkdayOverlaySummary = {
   resumedAfterBarrier?: boolean;
   detectedAt?: string;
   failureReason?: string;
+  barrierReason?: string;
+  barrierEvidence?: Record<string, unknown>;
 };
 
 function summarizeGenericPass(sessionId: string, atsProvider: string, fields: DetectedField[]): GenericPassSummary {

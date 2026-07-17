@@ -12,6 +12,7 @@ import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 import { stopApplicationRuntime } from "@/lib/applicationRuntimeState";
 import { getWorkdayBarrierStatusLabel } from "@/lib/workdayBarrier";
+import { resetWorkdayBarrierHistory } from "@/lib/workdaySafeMode";
 import { ApplicationSession, DetectedField } from "@/types";
 
 function unresolvedFields(fields: DetectedField[]) {
@@ -94,6 +95,9 @@ async function findDetectedFieldForCorrection(session: ApplicationSession, selec
 }
 
 async function reviewCurrentPage(sessionId: string, session: ApplicationSession, page: Page) {
+  if (session.atsProvider === "workday") {
+    resetWorkdayBarrierHistory(sessionId);
+  }
   await waitForPageReadiness(page);
   const prepared = await prepareDetectedFields(sessionId, page, session);
   if (prepared.waiting) {
@@ -293,6 +297,9 @@ export async function ensureApplicationOverlayForSession(sessionId: string, page
     }
 
     const { runAutofillPass } = await import("@/lib/quickApply");
+    if (currentSession.atsProvider === "workday") {
+      resetWorkdayBarrierHistory(targetSessionId);
+    }
     const updatedSession = await runAutofillPass(targetSessionId, {
       trigger: "manual",
       reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow,

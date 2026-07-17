@@ -180,6 +180,8 @@ async function prepareWorkdaySafeFields(
     committed: 0,
     unresolved: 0,
     barrierType: workdayBarrier.kind,
+    barrierReason: workdayBarrier.reason,
+    barrierEvidence: workdayBarrier.evidence,
     tenant: workdayBarrier.tenant,
     formReached: workdayBarrier.formReached,
     resumedAfterBarrier,

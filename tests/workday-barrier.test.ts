@@ -15,7 +15,11 @@ function snapshot(overrides: Partial<Parameters<typeof classifyWorkdayBarrierSna
     title: "Workday",
     heading: "",
     bodyText: "",
+    headings: [],
+    stepLabels: [],
     buttons: [],
+    ignoredOverlayText: false,
+    usedHiddenText: false,
     visibleInputs: [],
     ...overrides
   };
@@ -140,15 +144,19 @@ test("Workday barrier classifier detects verification, captcha, MFA, and form st
   const mfa = classifyWorkdayBarrierSnapshot(
     snapshot({
       heading: "Security Check",
+      headings: ["Security Check"],
       bodyText: "Enter the verification code from your authenticator app to continue.",
+      buttons: ["Verify code"],
       visibleInputs: [{ type: "text", name: "verification_code", id: "verification_code", label: "Verification Code", autocomplete: "" }]
     })
   );
   assert.equal(mfa.kind, "mfa_required");
+  assert.equal(mfa.evidence.hasVisibleMfaChallenge, true);
 
   const formReached = classifyWorkdayBarrierSnapshot(
     snapshot({
       heading: "My Information",
+      headings: ["My Information"],
       bodyText: "My Information First Name Last Name Email Address City Resume",
       visibleInputs: [
         { type: "text", name: "first_name", id: "first_name", label: "First Name", autocomplete: "given-name" },
@@ -166,6 +174,8 @@ test("Workday barrier classifier clears stale MFA and login copy once the real a
     snapshot({
       url: "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/job/Wilbour-Hall/Administrative-Coordinator_REQ210155/apply/applyManually",
       heading: "My Information",
+      headings: ["My Information"],
+      stepLabels: ["Current Step 3 of 7", "My Information", "My Experience", "Application Questions", "Voluntary Disclosures", "Self Identify", "Review"],
       bodyText:
         "MFA required My Information Back to Job Posting Current Step 3 of 7 My Experience Application Questions Voluntary Disclosures Self Identify Review How Did You Hear About Us? Prior affiliation with Brown University? Country",
       buttons: ["Back to Job Posting"],
@@ -180,6 +190,9 @@ test("Workday barrier classifier clears stale MFA and login copy once the real a
   assert.equal(result.kind, "form_reached");
   assert.equal(result.formReached, true);
   assert.match(result.reason, /overrides any stale login or verification copy/i);
+  assert.equal(result.evidence.hasVisibleMfaChallenge, false);
+  assert.equal(result.evidence.hasMyInformation, true);
+  assert.equal(result.evidence.hasApplicationStepper, true);
 });
 
 test("Workday barrier classifier clears stale account-creation copy when application-form evidence wins", () => {
@@ -187,6 +200,7 @@ test("Workday barrier classifier clears stale account-creation copy when applica
     snapshot({
       url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply/applyManually",
       heading: "My Information",
+      headings: ["My Information"],
       bodyText:
         "Create Account My Information Back to Job Posting Current Step 3 of 7 My Experience Application Questions Review Country City",
       buttons: ["Back to Job Posting"],
@@ -198,6 +212,46 @@ test("Workday barrier classifier clears stale account-creation copy when applica
   );
 
   assert.equal(result.kind, "form_reached");
+});
+
+test("hidden or stale MFA text alone does not produce an MFA barrier", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      url: "https://brown.wd5.myworkdayjobs.com/en-US/staff-careers-brown/job/Wilbour-Hall/Administrative-Coordinator_REQ210155/apply/applyManually",
+      heading: "My Information",
+      headings: ["My Information"],
+      stepLabels: ["My Information", "Application Questions", "Review"],
+      bodyText: "MFA required Authentication code Multi-factor authentication My Information Country",
+      visibleInputs: [
+        { type: "select-one", name: "country", id: "country", label: "Country", autocomplete: "country" },
+        { type: "text", name: "city", id: "city", label: "City", autocomplete: "address-level2" }
+      ],
+      ignoredOverlayText: true
+    })
+  );
+
+  assert.equal(result.kind, "form_reached");
+  assert.equal(result.evidence.ignoredOverlayText, true);
+  assert.equal(result.evidence.hasVisibleMfaChallenge, false);
+});
+
+test("Workday barrier classifier does not treat overlay-style MFA text as a visible MFA challenge", () => {
+  const result = classifyWorkdayBarrierSnapshot(
+    snapshot({
+      url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply/applyManually",
+      heading: "My Information",
+      headings: ["My Information"],
+      bodyText: "MFA required Application form detected Country",
+      ignoredOverlayText: true,
+      visibleInputs: [
+        { type: "select-one", name: "country", id: "country", label: "Country", autocomplete: "country" },
+        { type: "text", name: "city", id: "city", label: "City", autocomplete: "address-level2" }
+      ]
+    })
+  );
+
+  assert.equal(result.kind, "form_reached");
+  assert.equal(result.evidence.hasVisibleMfaChallenge, false);
 });
 
 test("Workday account assist only keeps safe name and email fields and leaves passwords untouched", () => {

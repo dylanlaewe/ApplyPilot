@@ -23,7 +23,11 @@ type WorkdayBarrierSnapshot = {
   title: string;
   heading: string;
   bodyText: string;
+  headings: string[];
+  stepLabels: string[];
   buttons: string[];
+  ignoredOverlayText: boolean;
+  usedHiddenText: boolean;
   visibleInputs: Array<{
     type: string;
     name: string;
@@ -31,6 +35,26 @@ type WorkdayBarrierSnapshot = {
     label: string;
     autocomplete: string;
   }>;
+};
+
+export type WorkdayBarrierEvidence = {
+  currentHost: string;
+  currentPath: string;
+  visibleHeadings: string[];
+  visibleStepLabels: string[];
+  hasApplyPath: boolean;
+  hasMyInformation: boolean;
+  hasApplicationStepper: boolean;
+  hasVisibleApplicationControls: boolean;
+  hasBackToJobPosting: boolean;
+  hasVisibleMfaChallenge: boolean;
+  hasVisibleLogin: boolean;
+  hasVisibleAccountCreation: boolean;
+  hasVisibleEmailVerification: boolean;
+  hasVisibleCaptcha: boolean;
+  hasVisibleTerms: boolean;
+  ignoredOverlayText: boolean;
+  usedHiddenText: boolean;
 };
 
 export type WorkdayBarrierDetection = {
@@ -46,13 +70,24 @@ export type WorkdayBarrierDetection = {
   formReached: boolean;
   accountAssistAllowed: boolean;
   reason: string;
+  evidence: WorkdayBarrierEvidence;
 };
 
 const LOGIN_PATTERNS = [/sign in/i, /log in/i, /already have an account/i];
 const ACCOUNT_CREATION_PATTERNS = [/create account/i, /create your account/i, /sign up/i, /register/i];
 const EMAIL_VERIFICATION_PATTERNS = [/verify email/i, /verification email/i, /confirm your email/i, /check your email/i];
 const VERIFICATION_CODE_PATTERNS = [/verification code/i, /enter code/i, /one-?time code/i, /security code/i];
-const MFA_PATTERNS = [/multi-?factor/i, /two-?factor/i, /authenticator/i, /authentication code/i];
+const MFA_HEADING_PATTERNS = [/multi-?factor authentication/i, /two-?factor authentication/i, /security check/i, /authenticator app/i];
+const MFA_CHALLENGE_PATTERNS = [
+  /enter (the )?(verification|authentication|security|one-?time) code/i,
+  /verification code/i,
+  /authentication code/i,
+  /security code/i,
+  /authenticator app/i,
+  /multi-?factor authentication/i,
+  /two-?factor authentication/i
+];
+const MFA_ACTION_PATTERNS = [/send code/i, /verify code/i, /resend code/i, /use authenticator/i, /authentication/i];
 const TERMS_PATTERNS = [/terms and conditions/i, /i agree/i, /acknowledge/i, /legal acknowledgement/i];
 const OVERLAY_ROOT_SELECTOR = "#applypilot-overlay, #applypilot-workday-overlay";
 const APPLY_START_PATTERNS = [
@@ -85,6 +120,17 @@ const ACCOUNT_ASSIST_FIELD_PATTERNS = [
   /email address/i,
   /username \(email\)/i,
   /username/i
+];
+const APPLICATION_CONTROL_PATTERNS = [
+  /how did you hear about us/i,
+  /prior affiliation/i,
+  /country/i,
+  /city/i,
+  /state/i,
+  /phone/i,
+  /email/i,
+  /first name/i,
+  /last name/i
 ];
 
 function hasPattern(patterns: RegExp[], text: string) {
@@ -161,17 +207,27 @@ export function classifyWorkdayBarrierSnapshot(
   } = {}
 ): WorkdayBarrierDetection {
   const combined = normalizeText([snapshot.title, snapshot.heading, snapshot.bodyText, snapshot.buttons.join(" ")].join(" "));
+  const headingText = normalizeText(snapshot.headings.join(" "));
+  const stepText = normalizeText(snapshot.stepLabels.join(" "));
   const tenant = sanitizeWorkdayTenant(snapshot.hostname);
   const hasPasswordField = snapshot.visibleInputs.some((input) => normalizeText(input.type) === "password" || /password/i.test(input.label));
-  const hasVerificationCodeField = snapshot.visibleInputs.some(
-    (input) => /code/i.test(input.label) || /otp|verification|security/i.test(input.name)
-  );
+  const hasVerificationCodeField = snapshot.visibleInputs.some((input) => {
+    const text = normalizeText([input.label, input.name, input.id].join(" "));
+    return /code|otp|verification|security|authenticator|authentication/i.test(text);
+  });
+  const hasVisibleMfaCodeField = snapshot.visibleInputs.some((input) => {
+    const text = normalizeText([input.label, input.name, input.id].join(" "));
+    return /verification code|authentication code|security code|one time code|one-time code|otp/i.test(text);
+  });
   const visibleApplicationInputs = snapshot.visibleInputs.filter((input) => {
     const combinedField = normalizeText([input.label, input.name, input.id, input.autocomplete].join(" "));
     if (!combinedField) return false;
     if (/search for jobs|keywords|job family|region\/state|location filter|search/i.test(combinedField)) return false;
     return !/cookie|consent/i.test(combinedField);
   });
+  const visibleApplicationControlLabels = visibleApplicationInputs.map((input) =>
+    normalizeText([input.label, input.name, input.id, input.autocomplete].join(" "))
+  );
   const accountAssistFields = visibleApplicationInputs.filter((input) =>
     ACCOUNT_ASSIST_FIELD_PATTERNS.some((pattern) => pattern.test(input.label))
   );
@@ -184,26 +240,80 @@ export function classifyWorkdayBarrierSnapshot(
   const hasApplyStartShell =
     hasPattern(APPLY_START_PATTERNS, combined) &&
     !hasPasswordField &&
-    !hasVerificationCodeField &&
+    !hasVisibleMfaCodeField &&
     !hasStructuredAccountSetupFields &&
     !visibleApplicationInputs.length;
   const applyFlowMatchCount = countPatternMatches(APPLICATION_FLOW_PATTERNS, combined);
   const applicationStepMatchCount = countPatternMatches(APPLICATION_STEP_PATTERNS, combined);
   const hasApplicationPath = /\/apply(?:\/|$)/i.test(snapshot.url);
+  const hasMyInformation =
+    /my information/i.test(snapshot.heading) || /my information/i.test(headingText) || /my information/i.test(stepText);
+  const hasBackToJobPosting = /back to job posting/i.test(combined);
+  const hasApplicationStepper = applicationStepMatchCount >= 2 || (applyFlowMatchCount >= 2 && applicationStepMatchCount >= 1);
+  const hasVisibleApplicationControls =
+    visibleApplicationInputs.length >= 2 || visibleApplicationControlLabels.some((label) => hasPattern(APPLICATION_CONTROL_PATTERNS, label));
+  const hasBrownFormSignals = visibleApplicationControlLabels.some((label) =>
+    /how did you hear about us|prior affiliation|country/i.test(label)
+  );
+  const hasVisibleLogin = hasPattern(LOGIN_PATTERNS, combined) && (hasPasswordField || /forgot your password/i.test(combined));
+  const hasVisibleAccountCreation =
+    hasPattern(ACCOUNT_CREATION_PATTERNS, combined) || (hasStructuredAccountSetupFields && hasPasswordField);
+  const hasVisibleEmailVerification = hasPattern(EMAIL_VERIFICATION_PATTERNS, combined);
+  const hasVisibleCaptcha =
+    options.captchaDetection?.status === "confirmed_visible_challenge" || /captcha|i'm not a robot|robot check/i.test(combined);
+  const hasVisibleTerms = hasPattern(TERMS_PATTERNS, combined) && !visibleApplicationInputs.length;
+  const hasVisibleMfaHeading = hasPattern(MFA_HEADING_PATTERNS, normalizeText([snapshot.heading, headingText].join(" ")));
+  const hasVisibleMfaText = hasPattern(MFA_CHALLENGE_PATTERNS, combined);
+  const hasVisibleMfaAction = snapshot.buttons.some((button) => hasPattern(MFA_ACTION_PATTERNS, normalizeText(button)));
+  const hasVisibleMfaChallenge =
+    !hasPasswordField &&
+    (
+      (hasVisibleMfaText && (hasVisibleMfaCodeField || hasVisibleMfaAction || hasVisibleMfaHeading)) ||
+      (hasVisibleMfaHeading && hasVisibleMfaCodeField)
+    );
   const hasStrongFormEvidence =
     !hasPasswordField &&
-    !hasVerificationCodeField &&
+    !hasVisibleMfaChallenge &&
     (
-      visibleApplicationInputs.length >= 2 ||
+      hasVisibleApplicationControls ||
+      hasBrownFormSignals ||
       (
         hasApplicationPath &&
         (
           hasPattern(APPLICATION_FORM_PATTERNS, combined) ||
-          (applyFlowMatchCount >= 2 && applicationStepMatchCount >= 2) ||
-          (applyFlowMatchCount >= 1 && applicationStepMatchCount >= 3)
+          hasMyInformation ||
+          hasApplicationStepper ||
+          (hasBackToJobPosting && (hasVisibleApplicationControls || hasMyInformation)) ||
+          (applyFlowMatchCount >= 1 && applicationStepMatchCount >= 2)
         )
       )
     );
+
+  const evidence: WorkdayBarrierEvidence = {
+    currentHost: snapshot.hostname,
+    currentPath: (() => {
+      try {
+        return new URL(snapshot.url).pathname;
+      } catch {
+        return snapshot.url;
+      }
+    })(),
+    visibleHeadings: snapshot.headings,
+    visibleStepLabels: snapshot.stepLabels,
+    hasApplyPath: hasApplicationPath,
+    hasMyInformation,
+    hasApplicationStepper,
+    hasVisibleApplicationControls,
+    hasBackToJobPosting,
+    hasVisibleMfaChallenge,
+    hasVisibleLogin,
+    hasVisibleAccountCreation,
+    hasVisibleEmailVerification,
+    hasVisibleCaptcha,
+    hasVisibleTerms,
+    ignoredOverlayText: snapshot.ignoredOverlayText,
+    usedHiddenText: snapshot.usedHiddenText
+  };
 
   let kind: WorkdayBarrierKind = "unknown_barrier";
   let reason = "The page did not expose a safe, recognized application-form state yet.";
@@ -215,28 +325,28 @@ export function classifyWorkdayBarrierSnapshot(
   } else if (hasStrongFormEvidence) {
     kind = "form_reached";
     reason = "Visible Workday application-form evidence overrides any stale login or verification copy.";
-  } else if (options.captchaDetection?.status === "confirmed_visible_challenge" || /captcha|i'm not a robot|robot check/i.test(combined)) {
+  } else if (hasVisibleCaptcha) {
     kind = "captcha_required";
     reason = "A visible CAPTCHA or human-verification prompt is present.";
-  } else if (hasPattern(MFA_PATTERNS, combined) || hasVerificationCodeField) {
+  } else if (hasVisibleMfaChallenge) {
     kind = "mfa_required";
-    reason = "The page is requesting a verification code or MFA step.";
-  } else if (hasPattern(EMAIL_VERIFICATION_PATTERNS, combined)) {
+    reason = "A visible MFA challenge is present on the page.";
+  } else if (hasVisibleEmailVerification) {
     kind = "email_verification_required";
     reason = "The page is asking the user to verify an email address before continuing.";
   } else if (hasApplyStartShell) {
     kind = "not_scorable";
     reason = "The page is still on a Workday apply-start step without visible account fields or application inputs.";
-  } else if (hasPattern(ACCOUNT_CREATION_PATTERNS, combined) || (hasStructuredAccountSetupFields && hasPasswordField)) {
+  } else if (hasVisibleAccountCreation) {
     kind = "account_creation_required";
     reason = "The page is asking the user to create a Workday account.";
-  } else if ((hasPasswordField && hasPattern(LOGIN_PATTERNS, combined)) || (hasPattern(LOGIN_PATTERNS, combined) && !hasPattern(SEARCH_PAGE_PATTERNS, combined))) {
+  } else if (hasVisibleLogin && !hasPattern(SEARCH_PAGE_PATTERNS, combined)) {
     kind = "login_required";
     reason = "The page is asking the user to sign in before the application form is available.";
-  } else if (hasPattern(TERMS_PATTERNS, combined) && !visibleApplicationInputs.length) {
+  } else if (hasVisibleTerms) {
     kind = "terms_required";
     reason = "The page requires a legal acknowledgement before the application form is available.";
-  } else if (visibleApplicationInputs.length >= 2 || hasPattern(APPLICATION_FORM_PATTERNS, combined)) {
+  } else if (hasVisibleApplicationControls || hasPattern(APPLICATION_FORM_PATTERNS, combined)) {
     kind = "form_reached";
     reason = "The visible page looks like an application form instead of a login or search screen.";
   }
@@ -254,7 +364,8 @@ export function classifyWorkdayBarrierSnapshot(
     manualBarrier: kind !== "form_reached" && kind !== "site_unavailable",
     formReached: kind === "form_reached",
     accountAssistAllowed: kind === "account_creation_required" && accountAssistAllowed,
-    reason
+    reason,
+    evidence
   };
 }
 
@@ -281,6 +392,20 @@ export async function detectWorkdayBarrier(
       .filter((element) => isVisible(element))
       .map((element) => clean(element.textContent || ""))
       .filter(Boolean);
+    const visibleHeadings = Array.from(
+      document.querySelectorAll("h1, h2, h3, h4, legend, [data-automation-id='pageHeader'], [data-automation-id='formTitle'], [data-automation-id='titleText']")
+    )
+      .filter((element) => isVisible(element))
+      .map((element) => clean(element.textContent || ""))
+      .filter(Boolean)
+      .slice(0, 12);
+    const visibleStepLabels = Array.from(document.querySelectorAll("[data-automation-id], li, span, div"))
+      .filter((element) => isVisible(element))
+      .map((element) => clean(element.textContent || ""))
+      .filter((text) =>
+        /my information|my experience|application questions|voluntary disclosures|self identify|review|back to job posting|current step \d+ of \d+/i.test(text)
+      )
+      .slice(0, 16);
 
     return {
       url: window.location.href,
@@ -292,11 +417,15 @@ export async function detectWorkdayBarrier(
         .replace(/\s+/g, " ")
         .trim(),
       bodyText: clean(bodyTextParts.join(" ")),
+      headings: visibleHeadings,
+      stepLabels: visibleStepLabels,
       buttons: Array.from(document.querySelectorAll("button, a, [role='button']"))
         .filter((element) => isVisible(element))
         .map((element) => clean(element.textContent || ""))
         .filter(Boolean)
         .slice(0, 30),
+      ignoredOverlayText: Boolean(document.querySelector(overlaySelector)),
+      usedHiddenText: false,
       visibleInputs: Array.from(document.querySelectorAll("input, textarea, select"))
         .filter((element) => isVisible(element))
         .map((element) => ({
