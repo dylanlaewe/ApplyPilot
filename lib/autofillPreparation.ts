@@ -15,8 +15,104 @@ import {
 import { getApplicantProfile } from "@/lib/profile";
 import { getShortAnswerGeneratorRuntimeHealth, summarizeShortAnswerGeneratorHealth } from "@/lib/shortAnswerGenerator";
 import { buildJobContext } from "@/lib/jobContext";
-import { ApplicationSession, CaptchaDetectionStatus } from "@/types";
+import { ApplicationSession, CaptchaDetectionStatus, DetectedField } from "@/types";
 import { detectWorkdayBarrier } from "@/lib/workdayBarrier";
+
+type WorkdaySectionSignal = {
+  sectionLabels: string[];
+};
+
+function createWorkdayManualField(label: string, reason: string, intent: DetectedField["intent"] = "unknown"): DetectedField {
+  return {
+    id: crypto.randomUUID(),
+    label,
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "",
+    detectedValue: "",
+    suggestedValue: "",
+    confidence: 0.45,
+    confidenceLevel: "needs_review",
+    status: "needs_review",
+    reason,
+    sensitivity: "review",
+    autoFillAllowed: false,
+    intent,
+    reviewCategory: "required_missing",
+    answerSource: "unknown",
+    verificationStatus: "not_attempted",
+    controlType: "text",
+    questionText: label,
+    nearbyText: label,
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false,
+    shortAnswer: null
+  };
+}
+
+export function buildWorkdayManualSectionFields(signals: WorkdaySectionSignal) {
+  const normalizedLabels = signals.sectionLabels.map((label) => label.trim()).filter(Boolean);
+  const fields: DetectedField[] = [];
+
+  if (normalizedLabels.some((label) => /work experience/i.test(label))) {
+    fields.push(
+      createWorkdayManualField(
+        "Work Experience",
+        "This Workday experience section is visible, but repeatable work-history entries still need your manual setup on this page."
+      )
+    );
+  }
+
+  if (normalizedLabels.some((label) => /^education$/i.test(label) || /education history/i.test(label))) {
+    fields.push(
+      createWorkdayManualField(
+        "Education",
+        "This Workday education section is visible, but repeatable education entries still need your manual setup on this page."
+      )
+    );
+  }
+
+  if (normalizedLabels.some((label) => /resume|cv/i.test(label))) {
+    fields.push(
+      createWorkdayManualField(
+        "Resume / CV",
+        "A resume section is visible on this Workday page, but ApplyPilot could not safely verify the upload control here yet."
+      )
+    );
+  }
+
+  return fields;
+}
+
+async function detectWorkdayManualSections(page: Page): Promise<WorkdaySectionSignal> {
+  const sectionLabels = await page
+    .evaluate(() => {
+      const isVisible = (element: Element | null) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+
+      const labels = new Set<string>();
+      for (const element of Array.from(document.querySelectorAll("h1, h2, h3, h4, legend, label, button, [data-automation-id]"))) {
+        if (!isVisible(element)) continue;
+        const text = (element.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        if (/^my experience$/i.test(text)) continue;
+        if (/work experience|education|resume\s*\/?\s*cv/i.test(text)) {
+          labels.add(text);
+        }
+      }
+
+      return Array.from(labels);
+    })
+    .catch(() => []);
+
+  return { sectionLabels };
+}
 
 export async function syncMetadata(sessionId: string, url?: string, navigate = false) {
   const session = await getApplicationSession(sessionId);
@@ -129,6 +225,14 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
     })
   );
 
+  const workdayFallbackFields =
+    refreshedSession.atsProvider === "workday" &&
+    detectedFields.length === 0 &&
+    Boolean(workdayBarrier?.formReached)
+      ? buildWorkdayManualSectionFields(await detectWorkdayManualSections(runtimePage))
+      : [];
+  const finalDetectedFields = workdayFallbackFields.length ? workdayFallbackFields : detectedFields;
+
   return {
     generatorRuntimeHealth,
     refreshedSession,
@@ -137,8 +241,8 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
     workdayBarrier,
     waiting,
     jobContext,
-    detectedFields,
-    generatorHealth: summarizeShortAnswerGeneratorHealth(detectedFields, generatorRuntimeHealth)
+    detectedFields: finalDetectedFields,
+    generatorHealth: summarizeShortAnswerGeneratorHealth(finalDetectedFields, generatorRuntimeHealth)
   };
 }
 
