@@ -138,6 +138,12 @@ function looksLikeEducationLevelOptions(options: string[]) {
   return matches.length >= 3;
 }
 
+function looksLikePhoneCountryCodeOptions(options: string[]) {
+  if (!options.length) return false;
+  const countryCodeOptions = options.filter((option) => /\(\+\d{1,4}\)|\+\d{1,4}\b/.test(option));
+  return countryCodeOptions.length >= 2;
+}
+
 function looksLikeDemographicSurveyPreamble(text: string) {
   return (
     /equal employment opportunity/.test(text) ||
@@ -174,6 +180,21 @@ export function detectQuestionIntent(field: RawScannedField) {
 
   if ((field.domId === "country" || normalizeText(label) === "country") && /phone/.test(combined) && (field.role === "combobox" || field.controlType === "aria_combobox")) {
     return { intent: "phone_country_code" as const, confidence: 0.99, reason: "Country combobox appears to be part of the phone input.", questionText: combined };
+  }
+
+  if (
+    (/country phone code|phone country code|calling code|dialing code|phone prefix|mobile country code/.test(combined) ||
+      (((field.domId === "country" || normalizeText(label) === "country" || normalizeText(label) === "items selected") &&
+        /phone/.test(combined)) &&
+        looksLikePhoneCountryCodeOptions(field.selectOptions ?? [])) ||
+      (looksLikePhoneCountryCodeOptions(field.selectOptions ?? []) && /\bphone\b/.test(combined) && /\bcountry\b/.test(combined)))
+  ) {
+    return {
+      intent: "phone_country_code" as const,
+      confidence: 0.99,
+      reason: "The control appears to be the phone country-code selector.",
+      questionText: combined
+    };
   }
 
   if ((field.domId === "phone" || /\bphone\b/.test(normalizeText(label))) && meta.type === "tel" && /country/.test(combined)) {

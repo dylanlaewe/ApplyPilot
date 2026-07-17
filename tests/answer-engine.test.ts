@@ -261,6 +261,20 @@ test("phone country code is not confused with extension", () => {
   assert.equal(ext.suggestedValue, "77");
 });
 
+test("generic Workday phone country-code pickers still suggest the exact country-code option", () => {
+  const result = suggestion("phone_country_code", createProfile(), {
+    label: "items selected",
+    nearbyText: "Country Phone Code Phone Number",
+    controlType: "listbox",
+    role: "listbox",
+    selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"]
+  });
+
+  assert.equal(result.suggestedValue, "United States of America (+1)");
+  assert.equal(result.matchedOption, "United States of America (+1)");
+  assert.doesNotMatch(result.suggestedValue, /7815551234/);
+});
+
 test("separate phone field receives national number only when country is separate", () => {
   const result = suggestion("phone_number", createProfile(), {
     type: "tel",

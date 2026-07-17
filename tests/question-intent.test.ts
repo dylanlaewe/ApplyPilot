@@ -130,3 +130,45 @@ test("greenhouse EEOC survey preambles are not misclassified as state fields", (
   assert.equal(result.intent, "unknown");
   assert.match(result.reason, /demographic|eeoc survey preamble/i);
 });
+
+test("workday phone country selectors stay classified as phone_country_code even with generic labels", () => {
+  const countryField: RawScannedField = {
+    label: "Country",
+    name: "country",
+    domId: "country",
+    type: "search",
+    selector: "#country",
+    detectedValue: "Select One",
+    controlType: "aria_combobox",
+    role: "combobox",
+    nearbyText: "Country Phone Code Phone Number",
+    selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const listboxField: RawScannedField = {
+    label: "items selected",
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "#phone_country_code_listbox",
+    detectedValue: "United States of America (+1)",
+    controlType: "listbox",
+    role: "listbox",
+    nearbyText: "Country Phone Code Phone Number",
+    selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const countryResult = detectQuestionIntent(countryField);
+  const listboxResult = detectQuestionIntent(listboxField);
+
+  assert.equal(countryResult.intent, "phone_country_code");
+  assert.ok(countryResult.confidence >= 0.95);
+  assert.equal(listboxResult.intent, "phone_country_code");
+  assert.ok(listboxResult.confidence >= 0.95);
+});
