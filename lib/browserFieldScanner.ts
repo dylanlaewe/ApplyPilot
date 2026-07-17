@@ -168,6 +168,85 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         ""
     );
 
+  const collectOptionLabels = (root) => {
+    if (!(root instanceof Element)) return [];
+    return Array.from(
+      root.querySelectorAll(
+        [
+          "option",
+          "[role='option']",
+          "[data-automation-id='promptOption']",
+          "[data-automation-id='menuItem']",
+          "[data-radix-collection-item]",
+          "[cmdk-item]"
+        ].join(", ")
+      )
+    )
+      .map((option) => cleanText(option.textContent))
+      .filter(Boolean);
+  };
+
+  const resolveRelatedOptionLabels = (element, owningContainer) => {
+    if (element instanceof HTMLSelectElement) {
+      return Array.from(element.options)
+        .map((option) => cleanText(option.textContent))
+        .filter(Boolean);
+    }
+
+    const deduped = [];
+    const seen = new Set();
+    const addLabels = (labels) => {
+      for (const label of labels) {
+        const normalized = normalizeFragment(label).toLowerCase();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        deduped.push(label);
+      }
+    };
+
+    const relatedIds = [
+      element.getAttribute("aria-controls") || "",
+      element.getAttribute("aria-owns") || "",
+      element.getAttribute("data-applypilot-related-listbox") || ""
+    ]
+      .join(" ")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const elementId = element.getAttribute("id") || "";
+    if (elementId) {
+      relatedIds.push("react-select-" + elementId + "-listbox");
+      relatedIds.push(elementId + "-listbox");
+      relatedIds.push(elementId + "_listbox");
+      relatedIds.push(elementId + "-menu");
+      relatedIds.push(elementId + "_menu");
+    }
+
+    if (element.getAttribute("role") === "listbox") {
+      addLabels(collectOptionLabels(element));
+    }
+
+    for (const relatedId of relatedIds) {
+      const candidate = document.getElementById(relatedId);
+      if (!candidate) continue;
+      addLabels(collectOptionLabels(candidate));
+    }
+
+    for (const scope of [owningContainer, element.parentElement, element.closest(".select, .select__container, .field, .form-field, .form-group")]) {
+      if (!(scope instanceof Element)) continue;
+      for (const candidate of scope.querySelectorAll("[role='listbox'], select")) {
+        if (candidate === element) continue;
+        addLabels(collectOptionLabels(candidate));
+      }
+      if (deduped.length) {
+        break;
+      }
+    }
+
+    return deduped;
+  };
+
   const findOwningFieldContainer = (element) => {
     const candidates = [];
     let current = element.parentElement;
@@ -441,12 +520,7 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         elementType = "search";
       }
 
-      const selectOptions =
-        element instanceof HTMLSelectElement
-          ? Array.from(element.options)
-              .map((option) => cleanText(option.textContent))
-              .filter(Boolean)
-          : undefined;
+      const selectOptions = resolveRelatedOptionLabels(element, owningContainer);
 
       results.push({
         label: explicitLabel,
@@ -460,7 +534,7 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
         placeholder: element.getAttribute("placeholder") ?? "",
         ariaLabel: element.getAttribute("aria-label") ?? "",
         nearbyText,
-        selectOptions,
+        selectOptions: selectOptions.length ? selectOptions : undefined,
         frameUrl: frameInfo.url,
         frameName: frameInfo.name,
         isRequired: element.hasAttribute("required") || element.getAttribute("aria-required") === "true",

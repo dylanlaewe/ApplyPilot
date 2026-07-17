@@ -244,7 +244,7 @@ test("Workday scanner ignores header chrome buttons and keeps Brown-style applic
               <h1>My Information</h1>
               <form>
                 <label for="heard_about">How Did You Hear About Us?</label>
-                <button id="heard_about" aria-haspopup="listbox" type="button">Select...</button>
+                <button id="heard_about" aria-haspopup="listbox" aria-controls="heard-about-listbox" type="button">Select...</button>
                 <label for="country">Country</label>
                 <input id="country" name="country" role="combobox" aria-controls="country-listbox" />
                 <label for="first_name">First Name</label>
@@ -252,6 +252,11 @@ test("Workday scanner ignores header chrome buttons and keeps Brown-style applic
                 <label for="last_name">Last Name</label>
                 <input id="last_name" name="last_name" autocomplete="family-name" />
               </form>
+              <div id="heard-about-listbox" role="listbox" style="display:none">
+                <div role="option">Employee Referral</div>
+                <div role="option">Indeed</div>
+                <div role="option">Other</div>
+              </div>
               <div id="country-listbox" role="listbox" style="display:none">
                 <div role="option">United States</div>
                 <div role="option">Canada</div>
@@ -272,6 +277,8 @@ test("Workday scanner ignores header chrome buttons and keeps Brown-style applic
   const fields = await scanVisibleFields(page);
   const ids = fields.map((field) => field.domId);
   const labels = fields.map((field) => field.label);
+  const heardAbout = fields.find((field) => field.domId === "heard_about");
+  const country = fields.find((field) => field.domId === "country");
 
   assert.ok(ids.includes("heard_about"));
   assert.ok(ids.includes("country"));
@@ -281,6 +288,8 @@ test("Workday scanner ignores header chrome buttons and keeps Brown-style applic
   assert.ok(labels.includes("Country"));
   assert.ok(labels.includes("First Name"));
   assert.ok(labels.includes("Last Name"));
+  assert.deepEqual(heardAbout?.selectOptions, ["Employee Referral", "Indeed", "Other"]);
+  assert.deepEqual(country?.selectOptions, ["United States", "Canada"]);
   assert.ok(!ids.includes("settingsSelectorButton"));
   assert.ok(!ids.includes("accountSettingsButton"));
 
