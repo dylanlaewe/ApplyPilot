@@ -22,14 +22,28 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
 
   try {
     const settings = await getSettings();
-    const runtime = await launchBrowserSession(session.currentPageUrl || session.jobUrl, id, {
-      navigate: false,
+    const requestedUrl =
+      session.currentPageUrl && session.currentPageUrl !== "about:blank"
+        ? session.currentPageUrl
+        : session.jobUrl;
+
+    if (!requestedUrl.trim()) {
+      return NextResponse.json({ error: "This application does not have a job URL yet." }, { status: 400 });
+    }
+
+    const runtime = await launchBrowserSession(requestedUrl, id, {
+      navigate: true,
       reuseOpenPage: settings.applicationBehavior.reuseBrowserWindow
     });
+
+    if (!runtime.page.url() || runtime.page.url() === "about:blank") {
+      return NextResponse.json({ error: "ApplyPilot could not open the application URL." }, { status: 500 });
+    }
+
     await waitForPageReadiness(runtime.page);
     const strategy = await resolveAutomationStrategyForPage({
       page: runtime.page,
-      url: runtime.page.url() || session.currentPageUrl || session.jobUrl,
+      url: runtime.page.url() || requestedUrl,
       settings
     });
     await ensureApplicationTransitionCoordinator(id, runtime.page);

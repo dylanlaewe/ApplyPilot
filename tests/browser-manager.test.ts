@@ -78,6 +78,81 @@ test("browser manager can rebind a session to the page the user is actively usin
   await resetBrowserManagerForTests();
 });
 
+test("browser manager opens a real Workday URL instead of leaving the session on about:blank", async () => {
+  await resetBrowserManagerForTests();
+
+  const context = await getOrCreateBrowserContext();
+  await context.route("https://tenant.wd5.myworkdayjobs.com/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `
+        <html>
+          <head><title>Administrative Coordinator</title></head>
+          <body><h1>Administrative Coordinator</h1></body>
+        </html>
+      `
+    });
+  });
+
+  const page = await getOrCreateSessionPage("session-launch", {
+    url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123",
+    navigate: false,
+    reuseOpenPage: false,
+    focus: false
+  });
+
+  assert.equal(page.url(), "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123");
+
+  await resetBrowserManagerForTests();
+});
+
+test("browser manager replaces a stale blank session page with a real Workday page", async () => {
+  await resetBrowserManagerForTests();
+
+  const context = await getOrCreateBrowserContext();
+  await context.route("https://tenant.wd5.myworkdayjobs.com/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `
+        <html>
+          <head><title>Administrative Coordinator</title></head>
+          <body>
+            <h1>My Information</h1>
+            <label for="country">Country</label>
+            <select id="country" name="country"><option>United States</option></select>
+          </body>
+        </html>
+      `
+    });
+  });
+
+  const blankPage = await getOrCreateSessionPage("session-blank", {
+    url: "about:blank",
+    navigate: false,
+    reuseOpenPage: false,
+    focus: false
+  });
+  assert.equal(blankPage.url(), "about:blank");
+
+  const livePage = await context.newPage();
+  await livePage.goto("https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123/apply/applyManually", {
+    waitUntil: "domcontentloaded"
+  });
+
+  const resolvedPage = await getOrCreateSessionPage("session-blank", {
+    url: "https://tenant.wd5.myworkdayjobs.com/en-US/careers/job/123",
+    navigate: false,
+    focus: false
+  });
+
+  assert.equal(resolvedPage, livePage);
+  assert.notEqual(resolvedPage, blankPage);
+
+  await resetBrowserManagerForTests();
+});
+
 test("browser manager prefers the live Workday apply page over the older job listing tab", async () => {
   await resetBrowserManagerForTests();
 

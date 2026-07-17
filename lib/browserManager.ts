@@ -57,6 +57,20 @@ type CanonicalPageCandidate = {
   reason: string;
 };
 
+function isBlankUrl(url: string) {
+  return !url || url === "about:blank";
+}
+
+function isHttpUrl(url: string) {
+  return /^https?:\/\//i.test(url);
+}
+
+function sameHost(candidateUrl: string, targetUrl: string) {
+  const candidate = safeUrlParts(candidateUrl).host;
+  const target = safeUrlParts(targetUrl).host;
+  return Boolean(candidate && target && candidate === target);
+}
+
 async function getPlaywright() {
   return import("playwright");
 }
@@ -114,6 +128,19 @@ function recordBrowserEvent(sessionId: string, page: Page, event: string, detail
     pageId: getPageId(page),
     host: url.host,
     path: url.path,
+    title: "",
+    detail,
+    at: new Date().toISOString()
+  });
+}
+
+function recordUrlDiagnostic(sessionId: string, event: string, url: string, detail?: string) {
+  const target = safeUrlParts(url);
+  pushBrowserDiagnostic(sessionId, {
+    event,
+    pageId: "",
+    host: target.host,
+    path: target.path,
     title: "",
     detail,
     at: new Date().toISOString()
@@ -249,6 +276,16 @@ async function resolveCanonicalWorkdayPage(
       detail = `${detail}; preferred page`;
     }
 
+    pushBrowserDiagnostic(sessionId, {
+      event: "canonical_candidate",
+      pageId: candidate.pageId,
+      host: candidate.host,
+      path: candidate.path,
+      title: candidate.title,
+      detail,
+      at: new Date().toISOString()
+    });
+
     if (!best || score > best.score) {
       best = {
         ...candidate,
@@ -262,6 +299,15 @@ async function resolveCanonicalWorkdayPage(
     return null;
   }
 
+  pushBrowserDiagnostic(sessionId, {
+    event: "canonical_selected",
+    pageId: best.pageId,
+    host: best.host,
+    path: best.path,
+    title: best.title,
+    detail: best.reason,
+    at: new Date().toISOString()
+  });
   bindSessionPage(sessionId, best.page, {
     reason: best.reason,
     barrierKind: best.barrierKind,
@@ -456,6 +502,11 @@ export async function getOrCreateSessionPage(
   let existing = state.pages.get(sessionId);
   const targetUrl = options.url;
   const shouldNavigate = options.navigate ?? true;
+  const hasRealTarget = Boolean(targetUrl && isHttpUrl(targetUrl));
+
+  if (targetUrl) {
+    recordUrlDiagnostic(sessionId, "launch_requested", targetUrl, shouldNavigate ? "navigate" : "reuse_if_valid");
+  }
 
   if (shouldResolveWorkdayCanonicalPage(sessionId, { url: targetUrl, preferredPage: options.preferredPage })) {
     const canonical = await resolveCanonicalWorkdayPage(sessionId, context, {
@@ -472,12 +523,16 @@ export async function getOrCreateSessionPage(
 
   if (existing && !existing.isClosed()) {
     installPageLifecycleDiagnostics(existing);
+    const existingUrl = existing.url();
+    const shouldForceNavigation = Boolean(targetUrl && hasRealTarget && isBlankUrl(existingUrl));
+    if (targetUrl && (shouldNavigate || shouldForceNavigation) && existingUrl !== targetUrl) {
+      recordUrlDiagnostic(sessionId, "navigation_requested", targetUrl, shouldForceNavigation ? "blank_page_recovery" : "existing_page");
+      await existing.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      recordBrowserEvent(sessionId, existing, "navigation_completed", shouldForceNavigation ? "blank_page_recovery" : "existing_page");
+    }
     if (focus) {
       await existing.bringToFront().catch(() => undefined);
-      recordBrowserEvent(sessionId, existing, "page_focused", "existing_session_page");
-    }
-    if (targetUrl && shouldNavigate && existing.url() !== targetUrl) {
-      await existing.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      recordBrowserEvent(sessionId, existing, "focus_requested", "existing_session_page");
     }
     return existing;
   }
@@ -487,16 +542,27 @@ export async function getOrCreateSessionPage(
       if (trackedSessionId === sessionId || candidatePage.isClosed()) {
         continue;
       }
+      const candidateUrl = candidatePage.url();
+      const candidateBlank = isBlankUrl(candidateUrl);
+      if (hasRealTarget && !sameHost(candidateUrl, targetUrl as string) && !(candidateBlank && shouldNavigate)) {
+        continue;
+      }
+      if (hasRealTarget && candidateBlank && !shouldNavigate) {
+        continue;
+      }
 
       state.pages.delete(trackedSessionId);
       state.pages.set(sessionId, candidatePage);
       installPageLifecycleDiagnostics(candidatePage);
+      const shouldForceNavigation = Boolean(targetUrl && hasRealTarget && candidateBlank);
+      if (targetUrl && (shouldNavigate || shouldForceNavigation) && candidateUrl !== targetUrl) {
+        recordUrlDiagnostic(sessionId, "navigation_requested", targetUrl, shouldForceNavigation ? "reused_blank_page" : "reused_page");
+        await candidatePage.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+        recordBrowserEvent(sessionId, candidatePage, "navigation_completed", shouldForceNavigation ? "reused_blank_page" : "reused_page");
+      }
       if (focus) {
         await candidatePage.bringToFront().catch(() => undefined);
-        recordBrowserEvent(sessionId, candidatePage, "page_focused", "reused_open_page");
-      }
-      if (targetUrl && shouldNavigate && candidatePage.url() !== targetUrl) {
-        await candidatePage.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+        recordBrowserEvent(sessionId, candidatePage, "focus_requested", "reused_open_page");
       }
       return candidatePage;
     }
@@ -515,12 +581,14 @@ export async function getOrCreateSessionPage(
 
   state.pages.set(sessionId, page);
   recordBrowserEvent(sessionId, page, "page_created");
+  if (targetUrl && (shouldNavigate || isBlankUrl(page.url()))) {
+    recordUrlDiagnostic(sessionId, "navigation_requested", targetUrl, "new_page");
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    recordBrowserEvent(sessionId, page, "navigation_completed", "new_page");
+  }
   if (focus) {
     await page.bringToFront().catch(() => undefined);
-    recordBrowserEvent(sessionId, page, "page_focused", "new_page");
-  }
-  if (targetUrl && (shouldNavigate || page.url() === "about:blank")) {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    recordBrowserEvent(sessionId, page, "focus_requested", "new_page");
   }
 
   return page;
