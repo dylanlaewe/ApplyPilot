@@ -159,3 +159,74 @@ test("overlay actions run on the page where the user clicked, not an older tab i
     await context.close();
   }
 });
+
+test("expanded overlay scrolls internally on smaller viewports", async () => {
+  if (!browser) return test.skip(launchError?.message ?? "Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setViewportSize({ width: 1280, height: 360 });
+  await page.setContent("<html><body><main style=\"height: 2000px;\">Application form</main></body></html>");
+
+  await registerApplicationOverlayBridge(page, async () => ({
+    ok: true,
+    status: "Finished",
+    message: "Ready for review",
+    recognized: Array.from({ length: 12 }, (_, index) => ({
+      label: `Recognized field ${index + 1}`,
+      status: "Filled and verified",
+      intent: "text",
+      source: "Saved profile",
+      controlType: "text"
+    })),
+    unresolved: Array.from({ length: 12 }, (_, index) => ({
+      label: `Needs review ${index + 1}`,
+      reason: "Requires manual confirmation",
+      controlType: "select"
+    }))
+  }));
+
+  await ensureApplicationOverlay(page, "session-scroll");
+  await page.locator("#applypilot-overlay summary").click();
+  await page.getByRole("button", { name: "Fill this page" }).click();
+  await page.evaluate(() => {
+    const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    if (!(panelBody instanceof HTMLElement)) {
+      return;
+    }
+    const probe = document.createElement("div");
+    probe.setAttribute("data-role", "scroll-probe");
+    probe.style.height = "1200px";
+    panelBody.appendChild(probe);
+  });
+
+  await page.waitForFunction(() => {
+    const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    const details = document.querySelector("#applypilot-overlay details");
+    const probe = document.querySelector('#applypilot-overlay [data-role="scroll-probe"]');
+    if (!(panelBody instanceof HTMLElement) || !(details instanceof HTMLDetailsElement) || !(probe instanceof HTMLElement)) {
+      return false;
+    }
+    const styles = window.getComputedStyle(panelBody);
+    return details.open && styles.overflowY === "auto" && panelBody.scrollHeight > panelBody.clientHeight && probe.offsetHeight > panelBody.clientHeight;
+  });
+
+  const metrics = await page.evaluate(() => {
+    const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    const details = document.querySelector("#applypilot-overlay details");
+    if (!(panelBody instanceof HTMLElement) || !(details instanceof HTMLElement)) {
+      return null;
+    }
+    return {
+      panelOverflowY: window.getComputedStyle(panelBody).overflowY,
+      panelMaxHeight: window.getComputedStyle(details).maxHeight,
+      panelHeight: details.getBoundingClientRect().height,
+      viewportHeight: window.innerHeight,
+      panelBodyScrollHeight: panelBody.scrollHeight,
+      panelBodyClientHeight: panelBody.clientHeight
+    };
+  });
+
+  assert.ok(metrics);
+  assert.equal(metrics.panelOverflowY, "auto");
+  assert.notEqual(metrics.panelMaxHeight, "none");
+  assert.ok(metrics.panelHeight < metrics.viewportHeight);
+  assert.ok(metrics.panelBodyScrollHeight > metrics.panelBodyClientHeight);
+});

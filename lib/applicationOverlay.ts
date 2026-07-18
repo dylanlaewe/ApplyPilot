@@ -91,6 +91,8 @@ export function getApplicationOverlayMarkup() {
           font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color: #0f172a;
           pointer-events: none;
+          --applypilot-overlay-expanded-max-height: min(80vh, 720px);
+          --applypilot-overlay-scroll-max-height: max(96px, calc(var(--applypilot-overlay-expanded-max-height) - 196px));
         }
         #${OVERLAY_ID} * {
           box-sizing: border-box;
@@ -104,6 +106,11 @@ export function getApplicationOverlayMarkup() {
           overflow: hidden;
           backdrop-filter: blur(14px);
           pointer-events: auto;
+        }
+        #${OVERLAY_ID} details[open] {
+          max-height: var(--applypilot-overlay-expanded-max-height);
+          display: flex;
+          flex-direction: column;
         }
         #${OVERLAY_ID} summary {
           list-style: none;
@@ -129,8 +136,12 @@ export function getApplicationOverlayMarkup() {
         #${OVERLAY_ID} .panel {
           border-top: 1px solid rgba(15, 23, 42, 0.08);
           padding: 12px;
-          display: grid;
+          display: flex;
+          flex: 1 1 auto;
+          flex-direction: column;
           gap: 10px;
+          min-height: 0;
+          overflow: hidden;
         }
         #${OVERLAY_ID} .status {
           font-size: 12px;
@@ -188,6 +199,17 @@ export function getApplicationOverlayMarkup() {
         #${OVERLAY_ID} .details {
           display: grid;
           gap: 8px;
+        }
+        #${OVERLAY_ID} .panel-body {
+          flex: 1 1 auto;
+          min-height: 0;
+          max-height: var(--applypilot-overlay-scroll-max-height);
+          display: grid;
+          gap: 10px;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-right: 4px;
+          margin-right: -4px;
         }
         #${OVERLAY_ID} .detail-group {
           border: 1px solid rgba(148, 163, 184, 0.18);
@@ -293,34 +315,36 @@ export function getApplicationOverlayMarkup() {
             <button type="button" data-action="report-wrong-answer">Report a wrong answer</button>
             <button type="button" data-action="stop" data-kind="stop">Stop ApplyPilot</button>
           </div>
-          <div class="details" aria-live="polite"></div>
-          <div class="correction-panel" hidden>
-            <div>
-              <div class="correction-label">Question</div>
-              <div class="correction-value" data-role="question">Select the field in the application first.</div>
-            </div>
-            <div>
-              <div class="correction-label">ApplyPilot entered</div>
-              <div class="correction-value" data-role="entered-value">No field selected yet.</div>
-            </div>
-            <label>
-              <span class="correction-label">Correct value</span>
-              <input type="text" data-role="corrected-value" />
-            </label>
-            <label>
-              <span class="correction-label">Note</span>
-              <textarea data-role="note" placeholder="Anything that would help next time?"></textarea>
-            </label>
-            <div>
-              <div class="correction-label">Reuse this correction later?</div>
-              <div class="toggle-row">
-                <button type="button" data-role="learning-yes" data-kind="primary">Yes</button>
-                <button type="button" data-role="learning-no">Not this time</button>
+          <div class="panel-body">
+            <div class="details" aria-live="polite"></div>
+            <div class="correction-panel" hidden>
+              <div>
+                <div class="correction-label">Question</div>
+                <div class="correction-value" data-role="question">Select the field in the application first.</div>
               </div>
-            </div>
-            <div class="correction-actions">
-              <button type="button" data-role="save-correction" data-kind="primary">Save correction</button>
-              <button type="button" data-role="cancel-correction">Cancel</button>
+              <div>
+                <div class="correction-label">ApplyPilot entered</div>
+                <div class="correction-value" data-role="entered-value">No field selected yet.</div>
+              </div>
+              <label>
+                <span class="correction-label">Correct value</span>
+                <input type="text" data-role="corrected-value" />
+              </label>
+              <label>
+                <span class="correction-label">Note</span>
+                <textarea data-role="note" placeholder="Anything that would help next time?"></textarea>
+              </label>
+              <div>
+                <div class="correction-label">Reuse this correction later?</div>
+                <div class="toggle-row">
+                  <button type="button" data-role="learning-yes" data-kind="primary">Yes</button>
+                  <button type="button" data-role="learning-no">Not this time</button>
+                </div>
+              </div>
+              <div class="correction-actions">
+                <button type="button" data-role="save-correction" data-kind="primary">Save correction</button>
+                <button type="button" data-role="cancel-correction">Cancel</button>
+              </div>
             </div>
           </div>
         </div>
