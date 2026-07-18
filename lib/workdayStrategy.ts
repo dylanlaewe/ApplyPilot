@@ -239,22 +239,41 @@ async function prepareWorkdaySafeFields(
 
   let preparedResult = prepared;
   if (!prepared.waiting && workdayBarrier.formReached) {
-    const hasWorkExperiencePlaceholder = preparedResult.detectedFields.some(
-      (field) => field.controlType === "repeatable_section" && /work experience/i.test(field.label || field.questionText || "")
-    );
+    const repeatableSections = [
+      {
+        key: "work_experience" as const,
+        labelPattern: /work experience/i,
+        eventName: "workday_work_experience_opened",
+        diagnosticKey: "work_experience_section"
+      },
+      {
+        key: "education" as const,
+        labelPattern: /\beducation\b/i,
+        eventName: "workday_education_opened",
+        diagnosticKey: "education_section"
+      }
+    ];
 
-    if (hasWorkExperiencePlaceholder) {
-      const sectionResult = await ensureWorkdayRepeatableSectionReady(runtime.page, "work_experience");
-      recordDiagnostic?.("work_experience_section", sectionResult.reason);
+    for (const section of repeatableSections) {
+      const hasPlaceholder = preparedResult.detectedFields.some(
+        (field) => field.controlType === "repeatable_section" && section.labelPattern.test(field.label || field.questionText || "")
+      );
+      if (!hasPlaceholder) continue;
+
+      const sectionResult = await ensureWorkdayRepeatableSectionReady(runtime.page, section.key);
+      recordDiagnostic?.(section.diagnosticKey, sectionResult.reason);
 
       if (sectionResult.opened) {
-        recordApplicationTransitionEvent(sessionId, "workday_work_experience_opened", sectionResult.reason);
+        recordApplicationTransitionEvent(sessionId, section.eventName, sectionResult.reason);
         preparedResult = await prepareDetectedFields(sessionId, runtime.page, session);
-      } else if (!sectionResult.alreadyVisible) {
+        continue;
+      }
+
+      if (!sectionResult.alreadyVisible) {
         preparedResult = {
           ...preparedResult,
           detectedFields: preparedResult.detectedFields.map((field) =>
-            field.controlType === "repeatable_section" && /work experience/i.test(field.label || field.questionText || "")
+            field.controlType === "repeatable_section" && section.labelPattern.test(field.label || field.questionText || "")
               ? {
                   ...field,
                   reason: sectionResult.reason

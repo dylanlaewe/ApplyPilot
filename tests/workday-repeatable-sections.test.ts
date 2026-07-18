@@ -96,3 +96,54 @@ test("Workday repeatable-section helper reports when the Add button is missing",
   assert.equal(result.alreadyVisible, false);
   assert.equal(result.reason, "Add button not found");
 });
+
+test("Workday repeatable-section helper opens Education without clicking Work Experience", async () => {
+  await page.setContent(`
+    <main>
+      <section id="experience-section">
+        <h2>Work Experience</h2>
+        <button id="add-experience" type="button">Add</button>
+        <div id="experience-fields" style="display:none">
+          <label for="company">Company</label>
+          <input id="company" name="company" type="text" />
+        </div>
+      </section>
+
+      <section id="education-section">
+        <h2>Education</h2>
+        <button id="add-education" type="button">Add</button>
+        <div id="education-fields" style="display:none">
+          <label for="school">School</label>
+          <input id="school" name="school" type="text" />
+          <label for="degree">Degree</label>
+          <input id="degree" name="degree" type="text" />
+        </div>
+      </section>
+    </main>
+    <script>
+      window.__applyPilotClicks = { experience: 0, education: 0 };
+      document.getElementById("add-experience").addEventListener("click", () => {
+        window.__applyPilotClicks.experience += 1;
+        document.getElementById("experience-fields").style.display = "block";
+      });
+      document.getElementById("add-education").addEventListener("click", () => {
+        window.__applyPilotClicks.education += 1;
+        document.getElementById("education-fields").style.display = "block";
+      });
+    </script>
+  `);
+
+  const result = await ensureWorkdayRepeatableSectionReady(page, "education");
+  const fields = await scanVisibleFields(page);
+  const clicks = await page.evaluate(
+    () => ((window as unknown as Window & { __applyPilotClicks: { experience: number; education: number } }).__applyPilotClicks)
+  );
+
+  assert.equal(result.opened, true);
+  assert.equal(result.reason, "Education form opened");
+  assert.equal(clicks.education, 1);
+  assert.equal(clicks.experience, 0);
+  assert.ok(fields.some((field) => field.domId === "school"));
+  assert.ok(fields.some((field) => field.domId === "degree"));
+  assert.ok(!fields.some((field) => field.domId === "company"));
+});
