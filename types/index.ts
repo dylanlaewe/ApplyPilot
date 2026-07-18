@@ -78,6 +78,8 @@ export type ControlType =
   | "menu_button"
   | "chip_input"
   | "custom_select"
+  | "repeatable_section"
+  | "file_upload_section"
   | "unknown";
 
 export type BinaryChoice = "yes" | "no" | "ask";

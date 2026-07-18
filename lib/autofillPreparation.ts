@@ -22,7 +22,14 @@ type WorkdaySectionSignal = {
   sectionLabels: string[];
 };
 
-function createWorkdayManualField(label: string, reason: string, intent: DetectedField["intent"] = "unknown"): DetectedField {
+function createWorkdayManualField(
+  label: string,
+  reason: string,
+  options: {
+    intent?: DetectedField["intent"];
+    controlType?: DetectedField["controlType"];
+  } = {}
+): DetectedField {
   return {
     id: crypto.randomUUID(),
     label,
@@ -38,11 +45,11 @@ function createWorkdayManualField(label: string, reason: string, intent: Detecte
     reason,
     sensitivity: "review",
     autoFillAllowed: false,
-    intent,
+    intent: options.intent ?? "unknown",
     reviewCategory: "required_missing",
     answerSource: "unknown",
     verificationStatus: "not_attempted",
-    controlType: "text",
+    controlType: options.controlType ?? "text",
     questionText: label,
     nearbyText: label,
     isRequired: true,
@@ -60,7 +67,8 @@ export function buildWorkdayManualSectionFields(signals: WorkdaySectionSignal) {
     fields.push(
       createWorkdayManualField(
         "Work Experience",
-        "This Workday experience section is visible, but repeatable work-history entries still need your manual setup on this page."
+        "Repeatable section not yet supported.",
+        { intent: "employer", controlType: "repeatable_section" }
       )
     );
   }
@@ -69,7 +77,8 @@ export function buildWorkdayManualSectionFields(signals: WorkdaySectionSignal) {
     fields.push(
       createWorkdayManualField(
         "Education",
-        "This Workday education section is visible, but repeatable education entries still need your manual setup on this page."
+        "Repeatable section not yet supported.",
+        { intent: "education_school", controlType: "repeatable_section" }
       )
     );
   }
@@ -78,7 +87,8 @@ export function buildWorkdayManualSectionFields(signals: WorkdaySectionSignal) {
     fields.push(
       createWorkdayManualField(
         "Resume / CV",
-        "A resume section is visible on this Workday page, but ApplyPilot could not safely verify the upload control here yet."
+        "Resume upload detected, but Workday upload for this control is not supported yet.",
+        { intent: "resume_upload", controlType: "file_upload_section" }
       )
     );
   }
@@ -112,6 +122,80 @@ async function detectWorkdayManualSections(page: Page): Promise<WorkdaySectionSi
     .catch(() => []);
 
   return { sectionLabels };
+}
+
+function workdaySectionText(field: Pick<DetectedField, "label" | "questionText" | "nearbyText" | "name">) {
+  return [field.label, field.questionText, field.nearbyText, field.name]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function matchesWorkdaySection(field: DetectedField, label: string) {
+  const text = workdaySectionText(field);
+  if (label === "Work Experience") return /work experience/.test(text);
+  if (label === "Education") return /\beducation\b/.test(text);
+  if (label === "Resume / CV") return /resume|cv/.test(text);
+  return false;
+}
+
+function isGenericUnsupportedWorkdaySection(field: DetectedField) {
+  return (
+    !field.suggestedValue.trim() &&
+    !field.autoFillAllowed &&
+    (field.intent === "unknown" || field.answerSource === "unknown") &&
+    (/applypilot does not support this control yet/i.test(field.reason) || /no saved answer yet/i.test(field.reason))
+  );
+}
+
+export function applyWorkdaySectionSemantics(fields: DetectedField[], signals: WorkdaySectionSignal) {
+  const placeholders = buildWorkdayManualSectionFields(signals);
+  if (!placeholders.length) return fields;
+
+  const nextFields = [...fields];
+  const resumeControlIndex = nextFields.findIndex(
+    (field) => field.intent === "resume_upload" && (field.type === "file" || field.controlType === "file")
+  );
+
+  for (const placeholder of placeholders) {
+    if (placeholder.label === "Resume / CV" && resumeControlIndex >= 0) {
+      continue;
+    }
+
+    const replaceIndex = nextFields.findIndex((field) => matchesWorkdaySection(field, placeholder.label) && isGenericUnsupportedWorkdaySection(field));
+    if (replaceIndex >= 0) {
+      const current = nextFields[replaceIndex];
+      nextFields[replaceIndex] = {
+        ...current,
+        label: placeholder.label,
+        type: placeholder.type,
+        suggestedValue: "",
+        confidence: placeholder.confidence,
+        confidenceLevel: placeholder.confidenceLevel,
+        status: placeholder.status,
+        reason: placeholder.reason,
+        sensitivity: placeholder.sensitivity,
+        autoFillAllowed: false,
+        intent: placeholder.intent,
+        reviewCategory: placeholder.reviewCategory,
+        answerSource: placeholder.answerSource,
+        verificationStatus: "not_attempted",
+        verificationMessage: undefined,
+        controlType: placeholder.controlType,
+        questionText: placeholder.questionText,
+        nearbyText: placeholder.nearbyText,
+        selectOptions: undefined
+      };
+      continue;
+    }
+
+    const alreadyRepresented = nextFields.some((field) => matchesWorkdaySection(field, placeholder.label));
+    if (!alreadyRepresented) {
+      nextFields.push(placeholder);
+    }
+  }
+
+  return nextFields;
 }
 
 export async function syncMetadata(sessionId: string, url?: string, navigate = false) {
@@ -224,14 +308,20 @@ export async function prepareDetectedFields(sessionId: string, runtimePage: Page
       metadataSource: refreshedSession.metadataSource
     })
   );
-
+  const workdaySectionSignals =
+    refreshedSession.atsProvider === "workday" && Boolean(workdayBarrier?.formReached) ? await detectWorkdayManualSections(runtimePage) : null;
   const workdayFallbackFields =
     refreshedSession.atsProvider === "workday" &&
     detectedFields.length === 0 &&
-    Boolean(workdayBarrier?.formReached)
-      ? buildWorkdayManualSectionFields(await detectWorkdayManualSections(runtimePage))
+    workdaySectionSignals
+      ? buildWorkdayManualSectionFields(workdaySectionSignals)
       : [];
-  const finalDetectedFields = workdayFallbackFields.length ? workdayFallbackFields : detectedFields;
+  const finalDetectedFields =
+    refreshedSession.atsProvider === "workday" && workdaySectionSignals
+      ? applyWorkdaySectionSemantics(workdayFallbackFields.length ? workdayFallbackFields : detectedFields, workdaySectionSignals)
+      : workdayFallbackFields.length
+        ? workdayFallbackFields
+        : detectedFields;
 
   return {
     generatorRuntimeHealth,

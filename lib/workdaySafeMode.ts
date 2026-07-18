@@ -480,6 +480,13 @@ export function applyWorkdaySafeModeRules(
       return next;
     }
 
+    if (next.controlType === "repeatable_section" || next.controlType === "file_upload_section") {
+      next.status = "needs_review";
+      next.autoFillAllowed = false;
+      next.reviewCategory = "required_missing";
+      return next;
+    }
+
     if (next.intent === "resume_upload" || next.type === "file") {
       clearFieldForManualReview(next, "Resume upload needs verification");
       return next;

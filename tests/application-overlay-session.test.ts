@@ -97,3 +97,31 @@ test("overlay buckets hide optional empty extension-style fields", () => {
   assert.equal(recognized.length, 0);
   assert.equal(unresolved.length, 0);
 });
+
+test("overlay buckets show Workday section placeholders as needs your input instead of generic review", () => {
+  const { unresolved } = buildOverlayFieldBuckets([
+    field({
+      label: "Work Experience",
+      intent: "employer",
+      controlType: "repeatable_section",
+      reason: "Repeatable section not yet supported.",
+      status: "needs_review",
+      autoFillAllowed: false,
+      answerSource: "unknown"
+    }),
+    field({
+      label: "Resume / CV",
+      intent: "resume_upload",
+      controlType: "file_upload_section",
+      reason: "Resume upload detected, but Workday upload for this control is not supported yet.",
+      status: "needs_review",
+      autoFillAllowed: false,
+      answerSource: "unknown"
+    })
+  ]);
+
+  assert.equal(unresolved[0]?.status, "Needs your input");
+  assert.equal(unresolved[0]?.controlType, "repeatable section");
+  assert.equal(unresolved[1]?.status, "Needs your input");
+  assert.equal(unresolved[1]?.controlType, "file upload section");
+});

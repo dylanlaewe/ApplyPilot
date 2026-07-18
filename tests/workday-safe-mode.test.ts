@@ -371,6 +371,33 @@ test("repeatable sections stay manual only when Workday cannot safely map the vi
   assert.equal(degree.status, "needs_review");
 });
 
+test("Workday section placeholders keep their honest manual-review reasons", () => {
+  const [experience, resume] = applyWorkdaySafeModeRules([
+    field({
+      label: "Work Experience",
+      intent: "employer",
+      controlType: "repeatable_section",
+      autoFillAllowed: false,
+      suggestedValue: "",
+      reason: "Repeatable section not yet supported."
+    }),
+    field({
+      label: "Resume / CV",
+      intent: "resume_upload",
+      controlType: "file_upload_section",
+      autoFillAllowed: false,
+      suggestedValue: "",
+      reason: "Resume upload detected, but Workday upload for this control is not supported yet."
+    })
+  ]);
+
+  assert.equal(experience.status, "needs_review");
+  assert.equal(experience.reason, "Repeatable section not yet supported.");
+
+  assert.equal(resume.status, "needs_review");
+  assert.equal(resume.reason, "Resume upload detected, but Workday upload for this control is not supported yet.");
+});
+
 test("visible repeatable text fields can stay eligible when ApplyPilot has an exact saved value", () => {
   const [school, employer, title] = applyWorkdaySafeModeRules([
     field({ intent: "education_school", label: "School", suggestedValue: "Commonwealth State University" }),

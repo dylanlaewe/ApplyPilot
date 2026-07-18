@@ -106,6 +106,7 @@ function recognizedStatusLabel(field: DetectedField) {
 function unresolvedStatusLabel(field: DetectedField) {
   if (field.status === "sensitive") return "Sensitive manual review";
   if (field.status === "unknown") return "Needs your answer";
+  if (field.controlType === "repeatable_section" || field.controlType === "file_upload_section") return "Needs your input";
   if (field.verificationStatus === "failed" || field.status === "error") return "Attempt failed";
   return "Needs review";
 }
