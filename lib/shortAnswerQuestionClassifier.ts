@@ -1,5 +1,5 @@
 import { extractAnswerConstraints } from "@/lib/answerConstraints";
-import { sanitizeFieldLabel } from "@/lib/fieldLabeling";
+import { isDomNoiseLabel, sanitizeFieldLabel } from "@/lib/fieldLabeling";
 import { normalizeText } from "@/lib/utils";
 import { FieldIntent, QuestionAnswerabilityKind, RawScannedField, ShortAnswerQuestionKind } from "@/types";
 
@@ -120,6 +120,7 @@ export function deduplicateQuestionFragments(fragments: Array<string | null | un
     const normalized = normalizeText(fragment);
     if (
       !normalized ||
+      isDomNoiseLabel(fragment) ||
       isInternalFieldIdentifier(fragment) ||
       GENERIC_PROMPT_FRAGMENTS.has(normalized) ||
       unique.some(

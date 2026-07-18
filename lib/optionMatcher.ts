@@ -119,8 +119,10 @@ export function matchBooleanOption({
   intent: FieldIntent;
 }) {
   const polarity = detectQuestionPolarity(questionText, intent);
+  const shouldReverseMeaning =
+    polarity === "reverse" || (polarity === "without_sponsorship" && intent !== "work_without_sponsorship");
   const targetMeaning =
-    polarity === "without_sponsorship" || polarity === "reverse"
+    shouldReverseMeaning
       ? answer === "yes"
         ? "no"
         : "yes"

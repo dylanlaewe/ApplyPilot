@@ -2,7 +2,9 @@ import { existsSync } from "fs";
 
 import { SAFE_AUTOFILL_THRESHOLD } from "@/lib/autofillRules";
 import { deriveFieldAnswer } from "@/lib/answerDerivation";
+import { inferFieldMetadata } from "@/lib/fieldDetection";
 import { matchAnswerBankItem } from "@/lib/questionMatching";
+import { buildFieldQuestionText } from "@/lib/shortAnswerQuestionClassifier";
 import { buildShortAnswerSuggestion } from "@/lib/shortAnswerGenerator";
 import {
   matchAvailabilityOption,
@@ -25,6 +27,73 @@ import { AnswerBankItem, AnswerSensitivity, ApplicantProfile, FieldIntent, RawSc
 
 function combinedQuestion(field: RawScannedField) {
   return [field.label, field.name, field.domId, field.placeholder, field.ariaLabel, field.nearbyText].filter(Boolean).join(" ");
+}
+
+const SPECIALTY_ANSWER_BANK_INTENTS = new Set<FieldIntent>([
+  "unknown",
+  "referral_source",
+  "previous_employment",
+  "work_authorization",
+  "sponsorship",
+  "sponsorship_now",
+  "sponsorship_future",
+  "work_without_sponsorship"
+]);
+
+function buildAnswerBankQuestionCandidates(field: RawScannedField) {
+  const candidates = [
+    buildFieldQuestionText(field),
+    inferFieldMetadata(field).label,
+    field.questionContainerText ?? "",
+    field.legendText ?? "",
+    field.groupLabel ?? "",
+    field.explicitLabel ?? "",
+    combinedQuestion(field)
+  ];
+
+  const unique: string[] = [];
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const normalized = normalizeText(trimmed);
+    if (!normalized) continue;
+    if (unique.some((existing) => normalizeText(existing) === normalized)) continue;
+    unique.push(trimmed);
+  }
+
+  return unique;
+}
+
+function isChoiceLikeField(field: RawScannedField) {
+  return (
+    field.type === "select-one" ||
+    field.type === "select-multiple" ||
+    field.type === "radio" ||
+    field.type === "checkbox" ||
+    ["native_select", "aria_combobox", "autocomplete", "listbox", "menu_button", "custom_select", "radio", "checkbox"].includes(
+      field.controlType || ""
+    )
+  );
+}
+
+function matchSavedStructuredAnswer(intent: FieldIntent, field: RawScannedField, profile: ApplicantProfile, questionText: string, answer: string) {
+  if (!isChoiceLikeField(field)) return null;
+  if (!(field.selectOptions?.length)) return null;
+
+  const normalizedAnswer = answer.trim().toLowerCase();
+  if (normalizedAnswer === "yes" || normalizedAnswer === "no") {
+    const matchedBoolean = matchBooleanOption({
+      questionText,
+      options: field.selectOptions,
+      answer: normalizedAnswer as "yes" | "no",
+      intent
+    });
+    if (matchedBoolean) {
+      return matchedBoolean;
+    }
+  }
+
+  return maybeMatchVisibleOption(intent, field, answer, profile, questionText) ?? matchTextOption(field.selectOptions, answer, "Matched your saved answer.");
 }
 
 function isLeverCommittedLocationPicker(intent: FieldIntent, field: RawScannedField) {
@@ -165,8 +234,9 @@ export function buildAnswerSuggestion({
     metadataSource?: string;
   };
 }): AnswerSuggestion {
-  const questionText = combinedQuestion(field);
-  const answerMatch = matchAnswerBankItem(questionText, answerBank);
+  const questionCandidates = buildAnswerBankQuestionCandidates(field);
+  const questionText = questionCandidates[0] || combinedQuestion(field);
+  const answerMatch = matchAnswerBankItem(questionCandidates, answerBank);
   const shortAnswer = buildShortAnswerSuggestion({
     intent,
     field,
@@ -177,6 +247,37 @@ export function buildAnswerSuggestion({
 
   if (shortAnswer) {
     return shortAnswer;
+  }
+
+  const savedStructuredMatch =
+    SPECIALTY_ANSWER_BANK_INTENTS.has(intent) && answerMatch.bestItem && answerMatch.bestScore >= 0.88
+      ? matchSavedStructuredAnswer(intent, field, profile, questionText, answerMatch.bestItem.answer)
+      : null;
+
+  if (SPECIALTY_ANSWER_BANK_INTENTS.has(intent) && answerMatch.bestItem && answerMatch.bestScore >= 0.88 && savedStructuredMatch) {
+    return {
+      suggestedValue: savedStructuredMatch.option,
+      confidence: Math.max(answerMatch.bestScore, savedStructuredMatch.confidence),
+      reason: `Matched saved answer: ${answerMatch.bestItem.label}.`,
+      autoFillAllowed: answerMatch.bestItem.autoFillAllowed,
+      sensitivity: answerMatch.bestItem.sensitivity,
+      matchedOption: savedStructuredMatch.option,
+      answerSource: "answer_bank",
+      shortAnswer: null
+    };
+  }
+
+  if (SPECIALTY_ANSWER_BANK_INTENTS.has(intent) && isChoiceLikeField(field) && answerMatch.bestItem && answerMatch.bestScore >= 0.88) {
+    return {
+      suggestedValue: "",
+      confidence: answerMatch.bestScore,
+      reason: `A saved answer matched ${answerMatch.bestItem.label}, but ApplyPilot could not find an exact visible option for this control.`,
+      autoFillAllowed: false,
+      sensitivity: answerMatch.bestItem.sensitivity,
+      matchedOption: undefined,
+      answerSource: "answer_bank",
+      shortAnswer: null
+    };
   }
 
   if (intent === "previous_employment" && answerMatch.bestItem && answerMatch.bestScore >= 0.92) {

@@ -12,6 +12,7 @@ import {
 } from "@/lib/profileFacts";
 import { createDefaultProfile, normalizeProfile } from "@/lib/profile";
 import { searchSchools } from "@/lib/schoolCatalog";
+import { createSyntheticQaAnswerBank } from "@/lib/syntheticQaProfile";
 import { ApplicantProfile, FieldIntent, RawScannedField } from "@/types";
 
 function createProfile(overrides?: Partial<ApplicantProfile>): ApplicantProfile {
@@ -395,6 +396,21 @@ test("sponsorship polarity is handled correctly", () => {
   assert.equal(result.suggestedValue, "Yes");
 });
 
+test("sponsorship now and future answers stay distinct when the saved profile differs", () => {
+  const profile = createProfile({
+    workAuthorizationProfile: {
+      ...createProfile().workAuthorizationProfile,
+      requiresSponsorshipNow: "yes",
+      requiresSponsorshipFuture: "no"
+    }
+  });
+
+  assert.equal(suggestion("sponsorship_now", profile).suggestedValue, "yes");
+  assert.equal(suggestion("sponsorship_future", profile).suggestedValue, "no");
+  assert.equal(suggestion("sponsorship", profile).suggestedValue, "yes");
+  assert.equal(suggestion("work_without_sponsorship", profile).suggestedValue, "no");
+});
+
 test("completed bachelor's degree maps to Bachelor's degree", () => {
   assert.equal(deriveHighestCompletedEducation(createProfile()), "bachelors_degree");
 });
@@ -657,6 +673,69 @@ test("saved short answers are reused and prefilled for review", () => {
   assert.equal(result.shortAnswer?.answerability, "reusable_saved_answer");
   assert.equal(result.autoFillAllowed, true);
   assert.match(result.suggestedValue, /automation tooling/i);
+});
+
+test("Brown-style affiliation controls match the saved answer using the real question label instead of value noise", () => {
+  const result = buildAnswerSuggestion({
+    intent: "unknown",
+    field: field("unknown", {
+      type: "button",
+      controlType: "menu_button",
+      role: "button",
+      label: "No Required",
+      detectedValue: "No",
+      questionContainerText: "Do you have any affiliation with Brown University?",
+      nearbyText: "Do you have any affiliation with Brown University? No Required",
+      selectOptions: ["Yes", "No"]
+    }),
+    profile: createProfile(),
+    answerBank: createSyntheticQaAnswerBank()
+  });
+
+  assert.equal(result.answerSource, "answer_bank");
+  assert.equal(result.suggestedValue, "No");
+  assert.equal(result.matchedOption, "No");
+});
+
+test("Brown-style referral-source dropdowns use the saved specialty answer when the real label is present", () => {
+  const result = buildAnswerSuggestion({
+    intent: "referral_source",
+    field: field("referral_source", {
+      type: "button",
+      controlType: "menu_button",
+      role: "button",
+      label: "Select One",
+      detectedValue: "Select One",
+      questionContainerText: "How Did You Hear About Us?",
+      nearbyText: "How Did You Hear About Us? Select One",
+      selectOptions: ["Employee Referral", "Company Website", "Indeed"]
+    }),
+    profile: createProfile(),
+    answerBank: createSyntheticQaAnswerBank()
+  });
+
+  assert.equal(result.answerSource, "answer_bank");
+  assert.equal(result.suggestedValue, "Company Website");
+  assert.equal(result.matchedOption, "Company Website");
+});
+
+test("Brown-style specialty textareas reuse saved answers from normalized Workday question labels", () => {
+  const result = buildAnswerSuggestion({
+    intent: "unknown",
+    field: field("unknown", {
+      type: "textarea",
+      label: "One Required",
+      questionContainerText: "Please provide your reason for wanting to leave or leaving your current position.",
+      nearbyText:
+        "Please provide your reason for wanting to leave or leaving your current position. One Required"
+    }),
+    profile: createProfile(),
+    answerBank: createSyntheticQaAnswerBank()
+  });
+
+  assert.equal(result.answerSource, "answer_bank");
+  assert.equal(result.shortAnswer?.answerability, "reusable_saved_answer");
+  assert.match(result.suggestedValue, /full-time opportunity/i);
 });
 
 test("unsupported experience topics stay in review instead of being invented", () => {

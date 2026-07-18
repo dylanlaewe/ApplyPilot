@@ -29,18 +29,40 @@ export function scoreQuestionPatternMatch(text: string, patterns: string[]) {
   return best;
 }
 
-export function matchAnswerBankItem(text: string, answerBank: AnswerBankItem[]) {
+function uniqueQuestionCandidates(text: string | string[]) {
+  const values = Array.isArray(text) ? text : [text];
+  const unique: string[] = [];
+
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const normalized = normalizeText(trimmed);
+    if (!normalized) continue;
+    if (unique.some((candidate) => normalizeText(candidate) === normalized)) continue;
+    unique.push(trimmed);
+  }
+
+  return unique;
+}
+
+export function matchAnswerBankItem(text: string | string[], answerBank: AnswerBankItem[]) {
+  const candidates = uniqueQuestionCandidates(text);
   let bestItem: AnswerBankItem | null = null;
   let bestScore = 0;
+  let matchedText = "";
 
   for (const item of answerBank) {
     if (!item.answer.trim()) continue;
-    const score = scoreQuestionPatternMatch(text, [item.canonicalQuestion, item.normalizedQuestion, ...item.questionPatterns]);
-    if (score > bestScore) {
-      bestItem = item;
-      bestScore = score;
+
+    for (const candidate of candidates) {
+      const score = scoreQuestionPatternMatch(candidate, [item.canonicalQuestion, item.normalizedQuestion, ...item.questionPatterns]);
+      if (score > bestScore) {
+        bestItem = item;
+        bestScore = score;
+        matchedText = candidate;
+      }
     }
   }
 
-  return { bestItem, bestScore };
+  return { bestItem, bestScore, matchedText };
 }

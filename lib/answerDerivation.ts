@@ -187,16 +187,26 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
     case "sponsorship_future":
     case "work_without_sponsorship": {
       const polarity = detectQuestionPolarity(questionText, intent);
+      const requiresNow = knowledge.workAuthorization.requiresSponsorshipNow;
       const requiresFuture = knowledge.workAuthorization.requiresSponsorshipFuture;
-      if (requiresFuture === null) {
+      const combinedRequirement =
+        requiresNow === null && requiresFuture === null ? null : Boolean(requiresNow || requiresFuture);
+      const requirement =
+        intent === "sponsorship_now"
+          ? requiresNow
+          : intent === "sponsorship_future"
+            ? requiresFuture
+            : combinedRequirement;
+
+      if (requirement === null) {
         return { value: "", source: "unknown", reason: "Sponsorship is set to ask each time.", confidence: 0.4 };
       }
       const yesNo =
         polarity === "without_sponsorship"
-          ? requiresFuture
+          ? requirement
             ? "no"
             : "yes"
-          : requiresFuture
+          : requirement
             ? "yes"
             : "no";
       return { value: yesNo, source: "explicit_profile", reason: "Using your saved sponsorship facts.", confidence: 0.96 };

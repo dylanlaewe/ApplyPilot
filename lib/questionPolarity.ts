@@ -14,7 +14,7 @@ export type QuestionPolarity =
 export function detectQuestionPolarity(questionText: string, intent: FieldIntent): QuestionPolarity {
   const normalized = normalizeText(questionText);
 
-  if (intent === "sponsorship" || intent === "sponsorship_future" || intent === "sponsorship_now") {
+  if (intent === "sponsorship" || intent === "sponsorship_future" || intent === "sponsorship_now" || intent === "work_without_sponsorship") {
     if (/without sponsorship|work without sponsorship|able to work without sponsorship|can you work without sponsorship|able to work unsponsored/.test(normalized)) {
       return "without_sponsorship";
     }
