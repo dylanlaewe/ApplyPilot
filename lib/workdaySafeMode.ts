@@ -127,7 +127,17 @@ const WORKDAY_COUNTRY_ALIASES: Record<string, string[]> = {
 };
 
 const WORKDAY_PHONE_COUNTRY_CODE_ALIASES: Record<string, string[]> = {
-  US: ["+1", "United States (+1)", "United States +1", "USA (+1)", "USA +1", "US (+1)", "US +1"]
+  US: [
+    "+1",
+    "United States of America (+1)",
+    "United States of America +1",
+    "United States (+1)",
+    "United States +1",
+    "USA (+1)",
+    "USA +1",
+    "US (+1)",
+    "US +1"
+  ]
 };
 
 const WORKDAY_SAVED_TEXTAREA_SOURCES = new Set<string>([

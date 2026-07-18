@@ -6,8 +6,13 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 
 import { chromium, type Browser, type Page } from "playwright";
 
+import { createDefaultAnswerBank } from "@/lib/answerBank";
+import { buildSuggestedFields } from "@/lib/fieldMapping";
 import { fillField } from "@/lib/playwrightSession";
-import { DetectedField } from "@/types";
+import { scanVisibleFields } from "@/lib/playwrightSession";
+import { createDefaultProfile, normalizeProfile } from "@/lib/profile";
+import { applyWorkdaySafeModeRules } from "@/lib/workdaySafeMode";
+import { DetectedField, ApplicantProfile } from "@/types";
 
 let browser: Browser;
 let page: Page;
@@ -60,6 +65,24 @@ function detectedField(overrides: Partial<DetectedField>): DetectedField {
     verificationStatus: "not_attempted",
     ...overrides
   };
+}
+
+function createWorkdayPhoneProfile(): ApplicantProfile {
+  const base = createDefaultProfile();
+  return normalizeProfile({
+    ...base,
+    identity: {
+      ...base.identity,
+      phoneCountry: "United States of America",
+      phoneCountryCode: "+1",
+      phoneNationalNumber: "6175550117",
+      phoneExtension: null
+    },
+    additionalApplicationFacts: {
+      ...base.additionalApplicationFacts,
+      phoneDeviceType: "Mobile"
+    }
+  });
 }
 
 test("native selects work and are verified", async () => {
@@ -369,6 +392,96 @@ test("searchable comboboxes do not press enter after a click-committed selection
 
   assert.equal(await page.locator(".select__single-value").textContent(), "United States (+1)");
   assert.equal(await page.locator("#phone_field").getAttribute("aria-invalid"), "false");
+});
+
+test("Brown-style Workday phone clusters scan, suppress helper surfaces, and fill exact country/device selections", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <fieldset class="application-question">
+      <legend>Phone</legend>
+
+      <div class="field-wrapper">
+        <label for="country_phone_code">Country Phone Code</label>
+        <button id="country_phone_code" type="button" aria-haspopup="listbox" aria-controls="country_phone_code_listbox">Select One</button>
+      </div>
+      <div id="country_phone_code_listbox" role="listbox" style="display:none">
+        <div role="option">United States of America (+1)</div>
+        <div role="option">U.S. Virgin Islands (+1)</div>
+        <div role="option">Canada (+1)</div>
+      </div>
+
+      <div class="field-wrapper">
+        <label for="phone_number">Phone Number</label>
+        <input id="phone_number" name="phone_number" type="tel" />
+      </div>
+
+      <div class="field-wrapper">
+        <label for="phone_extension">Phone Extension</label>
+        <input id="phone_extension" name="phone_extension" type="text" />
+      </div>
+
+      <div class="field-wrapper">
+        <label for="phone_device_type">Phone Device Type</label>
+        <button id="phone_device_type" type="button" aria-haspopup="listbox" aria-controls="phone_device_type_listbox">Select One</button>
+      </div>
+      <div id="phone_device_type_listbox" role="listbox" style="display:none">
+        <div role="option">Home</div>
+        <div role="option">Mobile</div>
+        <div role="option">Work</div>
+      </div>
+    </fieldset>
+    <script>
+      const wireMenu = (buttonId, listboxId) => {
+        const button = document.getElementById(buttonId);
+        const listbox = document.getElementById(listboxId);
+        button.addEventListener('click', () => {
+          listbox.style.display = 'block';
+          button.setAttribute('aria-expanded', 'true');
+          listbox.setAttribute('aria-label', 'items selected');
+        });
+        for (const option of listbox.querySelectorAll('[role="option"]')) {
+          option.addEventListener('click', () => {
+            button.textContent = option.textContent.trim();
+            listbox.style.display = 'none';
+            button.setAttribute('aria-expanded', 'false');
+          });
+        }
+      };
+      wireMenu('country_phone_code', 'country_phone_code_listbox');
+      wireMenu('phone_device_type', 'phone_device_type_listbox');
+      document.getElementById('country_phone_code').click();
+      document.getElementById('phone_device_type').click();
+    </script>
+  `);
+
+  const rawFields = await scanVisibleFields(page);
+  const profile = createWorkdayPhoneProfile();
+  const suggested = buildSuggestedFields(rawFields, profile, createDefaultAnswerBank());
+  const workdayFields = applyWorkdaySafeModeRules(suggested);
+
+  assert.equal(workdayFields.some((field) => field.controlType === "listbox" && field.intent === "phone_country_code"), false);
+
+  const countryPhoneCode = workdayFields.find((field) => field.intent === "phone_country_code");
+  const phoneNumber = workdayFields.find((field) => field.intent === "phone_number");
+  const phoneExtension = workdayFields.find((field) => field.intent === "phone_extension");
+  const phoneDeviceType = workdayFields.find((field) => field.intent === "phone_device_type");
+
+  assert.equal(countryPhoneCode?.matchedOption, "United States of America (+1)");
+  assert.equal(countryPhoneCode?.suggestedValue, "United States of America (+1)");
+  assert.equal(phoneNumber?.suggestedValue, "6175550117");
+  assert.equal(phoneExtension?.status, "skipped");
+  assert.equal(phoneDeviceType?.matchedOption, "Mobile");
+
+  const countryResult = await fillField(page, countryPhoneCode!, countryPhoneCode!.matchedOption || countryPhoneCode!.suggestedValue);
+  const phoneResult = await fillField(page, phoneNumber!, phoneNumber!.suggestedValue);
+  const deviceResult = await fillField(page, phoneDeviceType!, phoneDeviceType!.matchedOption || phoneDeviceType!.suggestedValue);
+
+  assert.equal(countryResult.success, true);
+  assert.equal(phoneResult.success, true);
+  assert.equal(deviceResult.success, true);
+  assert.equal(await page.locator("#country_phone_code").textContent(), "United States of America (+1)");
+  assert.equal(await page.locator("#phone_number").inputValue(), "6175550117");
+  assert.equal(await page.locator("#phone_device_type").textContent(), "Mobile");
 });
 
 test("radio groups verify the selected option instead of the first input in the group", async () => {
