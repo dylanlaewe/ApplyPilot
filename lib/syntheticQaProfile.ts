@@ -4,15 +4,24 @@ import path from "path";
 import { createDefaultAnswerBank, normalizeAnswerBankItem, saveAnswerBank, getAnswerBank } from "@/lib/answerBank";
 import { createDefaultProfile, getApplicantProfile, normalizeProfile, saveApplicantProfile } from "@/lib/profile";
 import { getStorageFilePath, writeStorageFile } from "@/lib/storage";
+import {
+  isSyntheticQaProfile,
+  SYNTHETIC_QA_PROFILE_EMAIL,
+  SYNTHETIC_QA_PROFILE_LABEL,
+  SYNTHETIC_QA_PROFILE_NAME,
+  SYNTHETIC_QA_RESUME_FILENAME
+} from "@/lib/syntheticQaProfileShared";
 import { AnswerBankItem, ApplicantProfile } from "@/types";
 
 const PROFILE_BACKUP_FILE = "profile.before-synthetic-qa.json";
 const ANSWER_BANK_BACKUP_FILE = "answer-bank.before-synthetic-qa.json";
-
-export const SYNTHETIC_QA_PROFILE_NAME = "Avery Example — Synthetic QA Profile — DO NOT SUBMIT";
-export const SYNTHETIC_QA_PROFILE_EMAIL = "avery.example.test@example.com";
-export const SYNTHETIC_QA_PROFILE_LABEL = "Synthetic QA profile loaded";
-export const SYNTHETIC_QA_RESUME_FILENAME = "avery-example-synthetic-resume.pdf";
+export {
+  isSyntheticQaProfile,
+  SYNTHETIC_QA_PROFILE_EMAIL,
+  SYNTHETIC_QA_PROFILE_LABEL,
+  SYNTHETIC_QA_PROFILE_NAME,
+  SYNTHETIC_QA_RESUME_FILENAME
+} from "@/lib/syntheticQaProfileShared";
 
 function nowIso() {
   return new Date().toISOString();
@@ -53,13 +62,6 @@ function buildSyntheticAnswerItem({
 
 export function getSyntheticQaResumePath() {
   return path.join(process.cwd(), "fixtures", "qa", SYNTHETIC_QA_RESUME_FILENAME);
-}
-
-export function isSyntheticQaProfile(profile: ApplicantProfile | null | undefined) {
-  if (!profile) return false;
-  const fullName = profile.identity.fullName || profile.fullName || "";
-  const email = profile.identity.email || profile.email || "";
-  return fullName === SYNTHETIC_QA_PROFILE_NAME || email === SYNTHETIC_QA_PROFILE_EMAIL;
 }
 
 export function createSyntheticQaProfile() {

@@ -40,7 +40,7 @@ import {
 import { formatDateTime } from "@/lib/utils";
 import { ApplicantProfile, BehavioralStory, EducationEntry, ExperienceEntry, JobType } from "@/types";
 import { cn } from "@/lib/utils";
-import { isSyntheticQaProfile, SYNTHETIC_QA_PROFILE_LABEL } from "@/lib/syntheticQaProfile";
+import { isSyntheticQaProfile, SYNTHETIC_QA_PROFILE_LABEL } from "@/lib/syntheticQaProfileShared";
 
 import { CityAutocomplete } from "@/components/CityAutocomplete";
 import { FieldOfStudyAutocomplete } from "@/components/FieldOfStudyAutocomplete";
