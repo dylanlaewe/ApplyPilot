@@ -85,20 +85,23 @@ export function getApplicationOverlayMarkup() {
       <style>
         #${OVERLAY_ID} {
           position: fixed;
+          top: 16px;
           right: 20px;
           bottom: 20px;
           z-index: 2147483647;
+          display: flex;
+          align-items: flex-end;
           font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color: #0f172a;
           pointer-events: none;
-          --applypilot-overlay-expanded-max-height: min(80vh, 720px);
-          --applypilot-overlay-scroll-max-height: max(96px, calc(var(--applypilot-overlay-expanded-max-height) - 196px));
+          --applypilot-overlay-expanded-max-height: min(calc(100vh - 32px), 720px);
         }
         #${OVERLAY_ID} * {
           box-sizing: border-box;
         }
         #${OVERLAY_ID} details {
           width: min(320px, calc(100vw - 28px));
+          max-height: calc(100vh - 32px);
           border: 1px solid rgba(15, 23, 42, 0.08);
           border-radius: 18px;
           background: rgba(255, 255, 255, 0.97);
@@ -108,9 +111,10 @@ export function getApplicationOverlayMarkup() {
           pointer-events: auto;
         }
         #${OVERLAY_ID} details[open] {
+          height: var(--applypilot-overlay-expanded-max-height);
           max-height: var(--applypilot-overlay-expanded-max-height);
-          display: flex;
-          flex-direction: column;
+          display: grid;
+          grid-template-rows: auto minmax(0, 1fr);
         }
         #${OVERLAY_ID} summary {
           list-style: none;
@@ -135,10 +139,10 @@ export function getApplicationOverlayMarkup() {
         }
         #${OVERLAY_ID} .panel {
           border-top: 1px solid rgba(15, 23, 42, 0.08);
-          padding: 12px;
-          display: flex;
+          padding: 12px 12px 10px;
+          display: grid;
           flex: 1 1 auto;
-          flex-direction: column;
+          grid-template-rows: auto minmax(0, 1fr) auto;
           gap: 10px;
           min-height: 0;
           overflow: hidden;
@@ -157,6 +161,11 @@ export function getApplicationOverlayMarkup() {
         #${OVERLAY_ID} .actions {
           display: grid;
           gap: 8px;
+        }
+        #${OVERLAY_ID} .panel-header {
+          display: grid;
+          gap: 10px;
+          flex: 0 0 auto;
         }
         #${OVERLAY_ID} button {
           width: 100%;
@@ -201,10 +210,9 @@ export function getApplicationOverlayMarkup() {
           gap: 8px;
         }
         #${OVERLAY_ID} .panel-body {
-          flex: 1 1 auto;
           min-height: 0;
-          max-height: var(--applypilot-overlay-scroll-max-height);
           display: grid;
+          align-content: start;
           gap: 10px;
           overflow-y: auto;
           overscroll-behavior: contain;
@@ -250,6 +258,7 @@ export function getApplicationOverlayMarkup() {
           padding-top: 10px;
           display: grid;
           gap: 10px;
+          margin-top: 10px;
         }
         #${OVERLAY_ID} .correction-label {
           font-size: 11px;
@@ -306,14 +315,9 @@ export function getApplicationOverlayMarkup() {
           <span class="summary-status">Ready</span>
         </summary>
         <div class="panel">
-          <div class="status" aria-live="polite">Ready</div>
-          <div class="result" aria-live="polite">Use Fill this page when the application form is visible.</div>
-          <div class="actions">
-            <button type="button" data-action="fill-page" data-kind="primary">Fill this page</button>
-            <button type="button" data-action="show-unresolved">Review unresolved</button>
-            <button type="button" data-action="upload-resume">Upload resume</button>
-            <button type="button" data-action="report-wrong-answer">Report a wrong answer</button>
-            <button type="button" data-action="stop" data-kind="stop">Stop ApplyPilot</button>
+          <div class="panel-header">
+            <div class="status" aria-live="polite">Ready</div>
+            <div class="result" aria-live="polite">Use Fill this page when the application form is visible.</div>
           </div>
           <div class="panel-body">
             <div class="details" aria-live="polite"></div>
@@ -345,6 +349,13 @@ export function getApplicationOverlayMarkup() {
                 <button type="button" data-role="save-correction" data-kind="primary">Save correction</button>
                 <button type="button" data-role="cancel-correction">Cancel</button>
               </div>
+            </div>
+            <div class="actions">
+            <button type="button" data-action="fill-page" data-kind="primary">Fill this page</button>
+            <button type="button" data-action="show-unresolved">Review unresolved</button>
+            <button type="button" data-action="upload-resume">Upload resume</button>
+            <button type="button" data-action="report-wrong-answer">Report a wrong answer</button>
+            <button type="button" data-action="stop" data-kind="stop">Stop ApplyPilot</button>
             </div>
           </div>
         </div>
@@ -436,6 +447,11 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
     root.id = overlayId;
     root.setAttribute("data-session-id", sessionId);
     root.innerHTML = markup;
+    const shell = root.querySelector("details");
+    const summary = root.querySelector("summary");
+    const panel = root.querySelector(".panel");
+    const panelHeader = root.querySelector(".panel-header");
+    const panelBody = root.querySelector(".panel-body");
     const summaryStatus = root.querySelector(".summary-status");
     const status = root.querySelector(".status");
     const result = root.querySelector(".result");
@@ -449,10 +465,31 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
     const learningNo = root.querySelector('[data-role="learning-no"]');
     const saveCorrection = root.querySelector('[data-role="save-correction"]');
     const cancelCorrection = root.querySelector('[data-role="cancel-correction"]');
-    if (!(summaryStatus instanceof HTMLElement) || !(status instanceof HTMLElement) || !(result instanceof HTMLElement) || !(details instanceof HTMLElement) || !(correctionPanel instanceof HTMLElement) || !(question instanceof HTMLElement) || !(enteredValue instanceof HTMLElement) || !(correctedValue instanceof HTMLInputElement) || !(note instanceof HTMLTextAreaElement) || !(learningYes instanceof HTMLButtonElement) || !(learningNo instanceof HTMLButtonElement) || !(saveCorrection instanceof HTMLButtonElement) || !(cancelCorrection instanceof HTMLButtonElement)) return;
+    if (!(shell instanceof HTMLDetailsElement) || !(summary instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(panelHeader instanceof HTMLElement) || !(panelBody instanceof HTMLElement) || !(summaryStatus instanceof HTMLElement) || !(status instanceof HTMLElement) || !(result instanceof HTMLElement) || !(details instanceof HTMLElement) || !(correctionPanel instanceof HTMLElement) || !(question instanceof HTMLElement) || !(enteredValue instanceof HTMLElement) || !(correctedValue instanceof HTMLInputElement) || !(note instanceof HTMLTextAreaElement) || !(learningYes instanceof HTMLButtonElement) || !(learningNo instanceof HTMLButtonElement) || !(saveCorrection instanceof HTMLButtonElement) || !(cancelCorrection instanceof HTMLButtonElement)) return;
     const buttons = Array.from(root.querySelectorAll("button[data-action]"));
     let learningApproved = true;
     let selectedField = null;
+    const syncOverlayLayout = () => {
+      const viewportHeight = window.innerHeight;
+      const maxShellHeight = Math.max(220, Math.min(viewportHeight - 32, 720));
+      root.style.setProperty("--applypilot-overlay-expanded-max-height", maxShellHeight + "px");
+      shell.style.maxHeight = maxShellHeight + "px";
+      if (shell.open) {
+        shell.style.height = maxShellHeight + "px";
+      } else {
+        shell.style.removeProperty("height");
+      }
+
+      const panelStyles = window.getComputedStyle(panel);
+      const gap = Number.parseFloat(panelStyles.rowGap || panelStyles.gap || "0") || 0;
+      const panelHeight = panel.getBoundingClientRect().height;
+      const availableBodyHeight =
+        panelHeight -
+        panelHeader.getBoundingClientRect().height -
+        gap;
+
+      panelBody.style.maxHeight = Math.max(96, Math.floor(availableBodyHeight)) + "px";
+    };
     const setBusy = (busy) => {
       buttons.forEach((button) => {
         if (button instanceof HTMLButtonElement) button.disabled = busy;
@@ -473,12 +510,14 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
       correctedValue.value = "";
       note.value = "";
       setLearningState(true);
+      syncOverlayLayout();
     };
     const showMessage = (nextStatus, nextMessage) => {
       status.textContent = nextStatus;
       summaryStatus.textContent = nextStatus;
       result.textContent = nextMessage;
       details.replaceChildren();
+      syncOverlayLayout();
     };
     const renderFieldGroup = (title, items) => {
       const group = document.createElement("details");
@@ -526,6 +565,7 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
         groups.push(renderFieldGroup("Needs your review (" + payload.unresolved.length + ")", payload.unresolved.slice(0, 10)));
       }
       details.replaceChildren(...groups);
+      syncOverlayLayout();
     };
     const runAction = async (action) => {
       const binding = window[bindingName];
@@ -574,6 +614,7 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
           setLearningState(true);
           showMessage("Needs your review", "Confirm the correction below, then save it locally.");
           correctedValue.focus();
+          syncOverlayLayout();
           return;
         }
         hideCorrectionPanel();
@@ -617,7 +658,10 @@ const INSTALL_APPLICATION_OVERLAY_SOURCE = String.raw`({ overlayId, sessionId, b
         setBusy(false);
       }
     });
+    shell.addEventListener("toggle", () => syncOverlayLayout());
+    window.addEventListener("resize", () => syncOverlayLayout());
     document.body.appendChild(root);
+    syncOverlayLayout();
   };
   overlayGlobal.__applyPilotOverlayBindingName = bindingName;
   if (!overlayGlobal.__applyPilotOverlayFocusListenerInstalled) {

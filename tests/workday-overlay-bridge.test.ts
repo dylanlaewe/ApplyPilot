@@ -208,9 +208,17 @@ test("expanded overlay scrolls internally on smaller viewports", async () => {
     return details.open && styles.overflowY === "auto" && panelBody.scrollHeight > panelBody.clientHeight && probe.offsetHeight > panelBody.clientHeight;
   });
 
+  await page.evaluate(() => {
+    const stopButton = document.querySelector('#applypilot-overlay button[data-action="stop"]');
+    if (stopButton instanceof HTMLElement) {
+      stopButton.scrollIntoView({ block: "nearest" });
+    }
+  });
+
   const metrics = await page.evaluate(() => {
     const panelBody = document.querySelector("#applypilot-overlay .panel-body");
     const details = document.querySelector("#applypilot-overlay details");
+    const stopButton = document.querySelector('#applypilot-overlay button[data-action="stop"]');
     if (!(panelBody instanceof HTMLElement) || !(details instanceof HTMLElement)) {
       return null;
     }
@@ -218,15 +226,23 @@ test("expanded overlay scrolls internally on smaller viewports", async () => {
       panelOverflowY: window.getComputedStyle(panelBody).overflowY,
       panelMaxHeight: window.getComputedStyle(details).maxHeight,
       panelHeight: details.getBoundingClientRect().height,
+      panelTop: details.getBoundingClientRect().top,
+      panelBottom: details.getBoundingClientRect().bottom,
       viewportHeight: window.innerHeight,
       panelBodyScrollHeight: panelBody.scrollHeight,
-      panelBodyClientHeight: panelBody.clientHeight
+      panelBodyClientHeight: panelBody.clientHeight,
+      stopButtonTop: stopButton instanceof HTMLElement ? stopButton.getBoundingClientRect().top : null,
+      stopButtonBottom: stopButton instanceof HTMLElement ? stopButton.getBoundingClientRect().bottom : null
     };
   });
 
   assert.ok(metrics);
   assert.equal(metrics.panelOverflowY, "auto");
   assert.notEqual(metrics.panelMaxHeight, "none");
+  assert.ok(metrics.panelTop >= 0);
+  assert.ok(metrics.panelBottom <= metrics.viewportHeight);
   assert.ok(metrics.panelHeight < metrics.viewportHeight);
   assert.ok(metrics.panelBodyScrollHeight > metrics.panelBodyClientHeight);
+  assert.ok(metrics.stopButtonTop !== null && metrics.stopButtonTop >= metrics.panelTop);
+  assert.ok(metrics.stopButtonBottom !== null && metrics.stopButtonBottom <= metrics.viewportHeight);
 });
