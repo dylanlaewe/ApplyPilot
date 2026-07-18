@@ -163,6 +163,8 @@ export function detectQuestionIntent(field: RawScannedField) {
   const meta = inferFieldMetadata(field);
   const label = meta.label;
   const allowedType = mapAllowedType(meta.type, meta.controlType);
+  const normalizedName = normalizeText(field.name || "");
+  const normalizedDomId = normalizeText(field.domId || "");
   const combined = normalizeText(
     [
       label,
@@ -188,6 +190,22 @@ export function detectQuestionIntent(field: RawScannedField) {
   }
 
   if (
+    !/extension|\bext\b/.test(combined) &&
+    ((meta.type === "tel" && /\bphone\b/.test(combined)) ||
+      /\bphone(?:\s|_|-)?number\b/.test(`${normalizedName} ${normalizedDomId}`) ||
+      ((normalizedDomId === "phone" || /\bphone\b/.test(normalizeText(label))) && meta.type === "tel"))
+  ) {
+    return {
+      intent: "phone_number" as const,
+      confidence: 0.98,
+      reason: /country/.test(combined)
+        ? "Phone input appears next to a separate country selector."
+        : "This control appears to be the phone number input.",
+      questionText: combined
+    };
+  }
+
+  if (
     (/country phone code|phone country code|calling code|dialing code|phone prefix|mobile country code/.test(combined) ||
       (((field.domId === "country" || normalizeText(label) === "country" || normalizeText(label) === "items selected") &&
         /phone/.test(combined)) &&
@@ -200,10 +218,6 @@ export function detectQuestionIntent(field: RawScannedField) {
       reason: "The control appears to be the phone country-code selector.",
       questionText: combined
     };
-  }
-
-  if ((field.domId === "phone" || /\bphone\b/.test(normalizeText(label))) && meta.type === "tel" && /country/.test(combined)) {
-    return { intent: "phone_number" as const, confidence: 0.98, reason: "Phone input appears next to a separate country selector.", questionText: combined };
   }
 
   if (meta.isSelect && looksLikeEducationLevelOptions(field.selectOptions ?? [])) {

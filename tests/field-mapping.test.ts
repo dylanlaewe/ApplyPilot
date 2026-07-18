@@ -145,6 +145,83 @@ test("duplicate helper resume upload controls are suppressed when a real resume 
   assert.equal(fields.find((field) => field.intent === "linkedin")?.label, "LinkedIn URL");
 });
 
+test("redundant Workday phone helper listboxes are suppressed while keeping distinct phone controls", () => {
+  const baseProfile = createProfile();
+  const profile = normalizeProfile({
+    ...baseProfile,
+    identity: {
+      ...baseProfile.identity,
+      phoneCountry: "United States of America",
+      phoneCountryCode: "+1",
+      phoneNationalNumber: "7815551234",
+      phoneExtension: null
+    }
+  });
+  const answerBank = createDefaultAnswerBank();
+  const fields = buildSuggestedFields(
+    [
+      rawField({
+        label: "Country",
+        name: "country",
+        domId: "country",
+        type: "search",
+        controlType: "aria_combobox",
+        role: "combobox",
+        selector: "#country",
+        nearbyText: "Country Phone Code Phone Number",
+        selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"]
+      }),
+      rawField({
+        label: "items selected",
+        type: "text",
+        controlType: "listbox",
+        role: "listbox",
+        selector: "#phone_country_code_listbox",
+        detectedValue: "United States of America (+1)",
+        nearbyText: "Country Phone Code Phone Number",
+        selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"]
+      }),
+      rawField({
+        label: "Phone",
+        name: "phone_number",
+        domId: "phone_number",
+        type: "tel",
+        controlType: "text",
+        selector: "#phone_number",
+        nearbyText: "Country Phone Code Phone Number"
+      }),
+      rawField({
+        label: "Extension",
+        name: "phone_extension",
+        domId: "phone_extension",
+        type: "text",
+        controlType: "text",
+        selector: "#phone_extension",
+        nearbyText: "Phone Extension"
+      })
+    ],
+    profile,
+    answerBank
+  );
+
+  assert.equal(fields.length, 3);
+
+  const phoneCountryCode = fields.find((field) => field.intent === "phone_country_code");
+  const phoneNumber = fields.find((field) => field.intent === "phone_number");
+  const phoneExtension = fields.find((field) => field.intent === "phone_extension");
+
+  assert.equal(phoneCountryCode?.controlType, "aria_combobox");
+  assert.equal(phoneCountryCode?.suggestedValue, "United States of America (+1)");
+  assert.equal(phoneCountryCode?.matchedOption, "United States of America (+1)");
+
+  assert.equal(phoneNumber?.controlType, "text");
+  assert.equal(phoneNumber?.suggestedValue, "7815551234");
+
+  assert.equal(phoneExtension?.controlType, "text");
+  assert.equal(phoneExtension?.suggestedValue, "");
+  assert.equal(fields.some((field) => field.controlType === "listbox"), false);
+});
+
 test("required Lever current location picker stays in review instead of attempting an unsafe text fill", () => {
   const profile = createProfile();
   const answerBank = createDefaultAnswerBank();

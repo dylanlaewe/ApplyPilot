@@ -52,6 +52,49 @@ function suppressDuplicateResumeHelpers(fields: DetectedField[]) {
   });
 }
 
+const PHONE_HELPER_INTENTS = new Set<DetectedField["intent"]>(["phone_country_code", "phone_device_type"]);
+
+function normalizedFieldContext(field: Pick<DetectedField, "label" | "questionText" | "nearbyText" | "name" | "domId">) {
+  return normalizeText([field.label, field.questionText, field.nearbyText, field.name, field.domId].filter(Boolean).join(" "));
+}
+
+function normalizedOptionSet(field: Pick<DetectedField, "selectOptions">) {
+  return new Set((field.selectOptions ?? []).map((option) => normalizeText(option)).filter(Boolean));
+}
+
+function fieldsSharePhoneHelperContext(helper: DetectedField, candidate: DetectedField) {
+  const helperContext = normalizedFieldContext(helper);
+  const candidateContext = normalizedFieldContext(candidate);
+
+  if (helperContext && candidateContext && (helperContext.includes(candidateContext) || candidateContext.includes(helperContext))) {
+    return true;
+  }
+
+  const helperOptions = normalizedOptionSet(helper);
+  const candidateOptions = normalizedOptionSet(candidate);
+  for (const option of helperOptions) {
+    if (candidateOptions.has(option)) {
+      return true;
+    }
+  }
+
+  return /\bphone\b/.test(`${helperContext} ${candidateContext}`.trim());
+}
+
+function suppressRedundantPhoneHelpers(fields: DetectedField[]) {
+  return fields.filter((field, index) => {
+    if (field.controlType !== "listbox") return true;
+    if (!PHONE_HELPER_INTENTS.has(field.intent)) return true;
+
+    return !fields.some((candidate, candidateIndex) => {
+      if (candidateIndex === index) return false;
+      if (candidate.intent !== field.intent) return false;
+      if (candidate.controlType === "listbox") return false;
+      return fieldsSharePhoneHelperContext(field, candidate);
+    });
+  });
+}
+
 function toReviewCategory(field: {
   status: DetectedField["status"];
   isRequired?: boolean;
@@ -181,8 +224,8 @@ export function buildSuggestedFields(
   answerBank: AnswerBankItem[],
   sessionContext?: Pick<ApplicationSession, "company" | "roleTitle" | "source" | "notes" | "metadataSource">
 ) {
-  const detectedFields = suppressDuplicateResumeHelpers(
-    rawFields.map((field) => suggestFieldValue(field, profile, answerBank, sessionContext))
+  const detectedFields = suppressRedundantPhoneHelpers(
+    suppressDuplicateResumeHelpers(rawFields.map((field) => suggestFieldValue(field, profile, answerBank, sessionContext)))
   );
   const hasSchoolFallbackTextField = detectedFields.some((field) => {
     if (field.intent !== "education_school") return false;

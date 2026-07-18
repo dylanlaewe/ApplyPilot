@@ -173,6 +173,26 @@ test("workday phone country selectors stay classified as phone_country_code even
   assert.ok(listboxResult.confidence >= 0.95);
 });
 
+test("workday phone number inputs stay classified separately from country-code helpers", () => {
+  const field: RawScannedField = {
+    label: "Phone",
+    name: "phone_number",
+    domId: "phone_number",
+    type: "tel",
+    selector: "#phone_number",
+    detectedValue: "",
+    controlType: "text",
+    nearbyText: "Country Phone Code Phone Number",
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "phone_number");
+  assert.ok(result.confidence >= 0.95);
+});
+
 test("workday phone device type selectors are classified separately from phone number fields", () => {
   const field: RawScannedField = {
     label: "Phone Device Type",
