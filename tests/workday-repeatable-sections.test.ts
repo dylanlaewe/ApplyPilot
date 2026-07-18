@@ -147,3 +147,45 @@ test("Workday repeatable-section helper opens Education without clicking Work Ex
   assert.ok(fields.some((field) => field.domId === "degree"));
   assert.ok(!fields.some((field) => field.domId === "company"));
 });
+
+test("Workday repeatable-section helper opens Resume / CV without clicking other sections", async () => {
+  await page.setContent(`
+    <main>
+      <section id="experience-section">
+        <h2>Work Experience</h2>
+        <button id="add-experience" type="button">Add</button>
+      </section>
+
+      <section id="resume-section">
+        <h2>Resume / CV</h2>
+        <button id="upload-resume" type="button">Upload</button>
+        <div id="resume-fields" style="display:none">
+          <button id="resume_button" type="button">Add Resume*</button>
+          <input id="resume_upload" type="file" style="display:none" />
+        </div>
+      </section>
+    </main>
+    <script>
+      window.__applyPilotClicks = { experience: 0, resume: 0 };
+      document.getElementById("add-experience").addEventListener("click", () => {
+        window.__applyPilotClicks.experience += 1;
+      });
+      document.getElementById("upload-resume").addEventListener("click", () => {
+        window.__applyPilotClicks.resume += 1;
+        document.getElementById("resume-fields").style.display = "block";
+      });
+    </script>
+  `);
+
+  const result = await ensureWorkdayRepeatableSectionReady(page, "resume_upload");
+  const fields = await scanVisibleFields(page);
+  const clicks = await page.evaluate(
+    () => ((window as unknown as Window & { __applyPilotClicks: { experience: number; resume: number } }).__applyPilotClicks)
+  );
+
+  assert.equal(result.opened, true);
+  assert.equal(result.reason, "Resume / CV form opened");
+  assert.equal(clicks.resume, 1);
+  assert.equal(clicks.experience, 0);
+  assert.equal(await page.locator("#resume_button").isVisible(), true);
+});

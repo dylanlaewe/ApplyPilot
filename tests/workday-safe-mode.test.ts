@@ -398,6 +398,23 @@ test("Workday section placeholders keep their honest manual-review reasons", () 
   assert.equal(resume.reason, "Resume upload detected, but Workday upload for this control is not supported yet.");
 });
 
+test("real Workday resume controls keep the saved file path for a verified upload step", () => {
+  const [resume] = applyWorkdaySafeModeRules([
+    field({
+      label: "Add Resume*",
+      intent: "resume_upload",
+      type: "text",
+      controlType: "menu_button",
+      suggestedValue: "/tmp/avery-example-synthetic-resume.pdf",
+      answerSource: "explicit_profile"
+    })
+  ]);
+
+  assert.equal(resume.status, "needs_review");
+  assert.equal(resume.reason, "Resume upload needs verification");
+  assert.equal(resume.suggestedValue, "/tmp/avery-example-synthetic-resume.pdf");
+});
+
 test("visible repeatable text fields can stay eligible when ApplyPilot has an exact saved value", () => {
   const [school, employer, title] = applyWorkdaySafeModeRules([
     field({ intent: "education_school", label: "School", suggestedValue: "Commonwealth State University" }),

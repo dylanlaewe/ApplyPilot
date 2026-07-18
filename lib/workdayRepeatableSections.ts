@@ -1,12 +1,13 @@
 import type { Page } from "playwright";
 
-type WorkdayRepeatableSectionKey = "work_experience" | "education";
+type WorkdayRepeatableSectionKey = "work_experience" | "education" | "resume_upload";
 
 type WorkdayRepeatableSectionConfig = {
   label: string;
   headingPhrases: string[];
   addPhrases: string[];
   fieldPhrases: string[];
+  readyPhrases?: string[];
 };
 
 type WorkdayRepeatableSectionInspection = {
@@ -28,13 +29,22 @@ const WORKDAY_REPEATABLE_SECTIONS: Record<WorkdayRepeatableSectionKey, WorkdayRe
     label: "Work Experience",
     headingPhrases: ["work experience", "experience"],
     addPhrases: ["add", "add work experience", "add another role", "add experience"],
-    fieldPhrases: ["employer", "company", "job title", "title", "start date", "end date", "currently work here"]
+    fieldPhrases: ["employer", "company", "job title", "title", "start date", "end date", "currently work here"],
+    readyPhrases: ["employer", "company", "job title", "title", "start date", "end date", "currently work here"]
   },
   education: {
     label: "Education",
     headingPhrases: ["education", "education history"],
     addPhrases: ["add", "add education", "add school"],
-    fieldPhrases: ["school", "university", "degree", "field of study", "major", "graduation", "gpa"]
+    fieldPhrases: ["school", "university", "degree", "field of study", "major", "graduation", "gpa"],
+    readyPhrases: ["school", "university", "degree", "field of study", "major", "graduation", "gpa"]
+  },
+  resume_upload: {
+    label: "Resume / CV",
+    headingPhrases: ["resume / cv", "resume", "cv"],
+    addPhrases: ["upload", "upload resume", "add resume", "attach"],
+    fieldPhrases: ["resume", "cv", "file"],
+    readyPhrases: ["add resume", "resume file", "choose file", "resume_upload", "file"]
   }
 };
 
@@ -42,6 +52,7 @@ function buildInspectScript(section: WorkdayRepeatableSectionConfig) {
   return `
     (() => {
       const config = ${JSON.stringify(section)};
+      const readyPhrases = config.readyPhrases || config.fieldPhrases;
       const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim().toLowerCase();
       const visible = (element) => {
         if (!(element instanceof HTMLElement)) return false;
@@ -73,7 +84,7 @@ function buildInspectScript(section: WorkdayRepeatableSectionConfig) {
         .filter((element) => visible(element) && includesPhrase(cleanText(element.textContent), config.headingPhrases));
 
       const relevantControls = Array.from(
-        document.querySelectorAll("input, textarea, select, [role='combobox'], button[aria-haspopup='listbox'], button[aria-expanded]")
+        document.querySelectorAll("input, textarea, select, button, [role='button'], [role='combobox']")
       ).filter((element) => {
         if (!visible(element)) return false;
         const controlText = cleanText(
@@ -83,12 +94,12 @@ function buildInspectScript(section: WorkdayRepeatableSectionConfig) {
             element.getAttribute("name"),
             element.getAttribute("id"),
             element.closest("label")?.textContent,
-            element.parentElement?.textContent
+            element.textContent
           ]
             .filter(Boolean)
             .join(" ")
         );
-        if (!includesPhrase(controlText, config.fieldPhrases)) return false;
+        if (!includesPhrase(controlText, readyPhrases)) return false;
         return ancestorTexts(element).some((text) => includesPhrase(text, config.headingPhrases));
       });
 
@@ -148,6 +159,7 @@ function buildOpenedScript(section: WorkdayRepeatableSectionConfig) {
   return `
     (() => {
       const config = ${JSON.stringify(section)};
+      const readyPhrases = config.readyPhrases || config.fieldPhrases;
       const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim().toLowerCase();
       const visible = (element) => {
         if (!(element instanceof HTMLElement)) return false;
@@ -170,7 +182,7 @@ function buildOpenedScript(section: WorkdayRepeatableSectionConfig) {
       };
 
       return Array.from(
-        document.querySelectorAll("input, textarea, select, [role='combobox'], button[aria-haspopup='listbox'], button[aria-expanded]")
+        document.querySelectorAll("input, textarea, select, button, [role='button'], [role='combobox']")
       ).some((element) => {
         if (!visible(element)) return false;
         const controlText = cleanText(
@@ -180,12 +192,12 @@ function buildOpenedScript(section: WorkdayRepeatableSectionConfig) {
             element.getAttribute("name"),
             element.getAttribute("id"),
             element.closest("label")?.textContent,
-            element.parentElement?.textContent
+            element.textContent
           ]
             .filter(Boolean)
             .join(" ")
         );
-        if (!includesPhrase(controlText, config.fieldPhrases)) return false;
+        if (!includesPhrase(controlText, readyPhrases)) return false;
         return ancestorTexts(element).some((text) => includesPhrase(text, config.headingPhrases));
       });
     })()

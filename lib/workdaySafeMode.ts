@@ -363,6 +363,18 @@ function markOptionalWorkdayField(field: DetectedField, reason: string) {
   }
 }
 
+function markWorkdayResumeField(field: DetectedField, reason: string) {
+  field.status = "needs_review";
+  field.reason = reason;
+  field.autoFillAllowed = false;
+  field.reviewCategory = "required_missing";
+  field.matchedOption = undefined;
+  if (field.verificationStatus === "verified") {
+    field.verificationStatus = "not_attempted";
+    field.verificationMessage = undefined;
+  }
+}
+
 export function isHighRiskWorkdayIntent(intent: FieldIntent) {
   return WORKDAY_HIGH_RISK_INTENTS.has(intent);
 }
@@ -498,7 +510,11 @@ export function applyWorkdaySafeModeRules(
     }
 
     if (next.intent === "resume_upload" || next.type === "file") {
-      clearFieldForManualReview(next, "Resume upload needs verification");
+      if (!next.suggestedValue.trim()) {
+        clearFieldForManualReview(next, "Resume upload needs verification");
+        return next;
+      }
+      markWorkdayResumeField(next, "Resume upload needs verification");
       return next;
     }
 

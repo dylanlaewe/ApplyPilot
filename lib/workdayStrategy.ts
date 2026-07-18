@@ -251,6 +251,12 @@ async function prepareWorkdaySafeFields(
         labelPattern: /\beducation\b/i,
         eventName: "workday_education_opened",
         diagnosticKey: "education_section"
+      },
+      {
+        key: "resume_upload" as const,
+        labelPattern: /resume|cv/i,
+        eventName: "workday_resume_section_opened",
+        diagnosticKey: "resume_section"
       }
     ];
 
@@ -517,6 +523,52 @@ export async function runWorkdaySafePass(
       WORKDAY_PASS_TIMEOUT_MS,
       "Workday safe pass timed out before the page settled."
     );
+
+    const resumeField = prepared.safeFields.find(
+      (field) =>
+        field.intent === "resume_upload" &&
+        field.controlType !== "file_upload_section" &&
+        Boolean(field.suggestedValue.trim())
+    );
+
+    if (resumeField) {
+      try {
+        const verification = await withTimeout(
+          fillField(prepared.runtime.page, resumeField, resumeField.suggestedValue, {
+            allowRetry: false,
+            highlight: false
+          }),
+          WORKDAY_FIELD_FILL_TIMEOUT_MS,
+          "Timed out uploading the resume on the Workday page."
+        );
+        resumeField.detectedValue = verification.actualValue || resumeField.suggestedValue.split(/[\\/]/).pop() || "";
+        resumeField.status = "filled";
+        resumeField.verificationStatus = "verified";
+        resumeField.verificationMessage = verification.message;
+        resumeField.commitState = verification.commitState;
+        resumeField.reason = "Resume uploaded and verified on the Workday page.";
+        const fieldKey = buildWorkdayFieldKey(resumeField);
+        verifiedFieldKeys.push(fieldKey);
+        auditEntries.push(
+          createAuditEntry(sessionId, "field_filled", `Uploaded ${resumeField.label || "resume"} in Workday safe mode.`, {
+            fieldId: resumeField.id,
+            reason: "ApplyPilot uploaded the saved resume and verified that the page reflected the file name."
+          })
+        );
+      } catch (error) {
+        resumeField.status = "needs_review";
+        resumeField.verificationStatus = "failed";
+        resumeField.verificationMessage = humanizeError(error);
+        resumeField.commitState = (error as { commitState?: DetectedField["commitState"] }).commitState ?? "unresolved";
+        resumeField.reason = resumeField.verificationMessage || "Resume upload needs verification";
+        auditEntries.push(
+          createAuditEntry(sessionId, "needs_review", `Left ${resumeField.label || "resume"} for manual review.`, {
+            fieldId: resumeField.id,
+            reason: resumeField.reason
+          })
+        );
+      }
+    }
 
     completeWorkdayPass(sessionId, verifiedFieldKeys);
     recordDiagnostic?.("pass_finished");
