@@ -6,6 +6,7 @@ import React from "react";
 
 import { ProfileForm } from "@/components/ProfileForm";
 import { createDefaultProfile, normalizeProfile } from "@/lib/profile";
+import { createSyntheticQaProfile } from "@/lib/syntheticQaProfile";
 import { ApplicantProfile } from "@/types";
 
 import { setupDom, wait } from "./test-helpers";
@@ -49,6 +50,13 @@ function createProfile(overrides: Partial<ApplicantProfile> = {}) {
       } satisfies ApplicantProfile["resume"]),
     ...overrides
   } as ApplicantProfile);
+}
+
+function syntheticQaStatusResponse(backupAvailable = false) {
+  return new Response(JSON.stringify({ backupAvailable }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" }
+  });
 }
 
 beforeEach(() => {
@@ -105,6 +113,9 @@ test("resume upload and replacement update the displayed filename only", async (
   globalThis.fetch = async (input) => {
     const url = getRequestUrl(input);
     fetchCalls.push(url);
+    if (url === "/api/profile/synthetic-qa") {
+      return syntheticQaStatusResponse(false);
+    }
     if (url === "/api/profile/resume") {
       uploadCount += 1;
       return new Response(
@@ -156,6 +167,10 @@ test("profile autosaves quietly and shows a saved state", async () => {
     const url = getRequestUrl(input);
     calls.push({ url, body: init?.body as string | undefined });
 
+    if (url === "/api/profile/synthetic-qa") {
+      return syntheticQaStatusResponse(false);
+    }
+
     if (url === "/api/profile") {
       const body = JSON.parse(String(init?.body ?? "{}")) as ApplicantProfile;
       return new Response(JSON.stringify({ profile: normalizeProfile(body) }), {
@@ -180,11 +195,17 @@ test("profile autosaves quietly and shows a saved state", async () => {
 
 test("save failures show a clear error", async () => {
   const user = userEvent.setup({ document: globalThis.document });
-  globalThis.fetch = async () =>
-    new Response(JSON.stringify({ error: "Disk is full." }), {
+  globalThis.fetch = async (input) => {
+    const url = getRequestUrl(input);
+    if (url === "/api/profile/synthetic-qa") {
+      return syntheticQaStatusResponse(false);
+    }
+
+    return new Response(JSON.stringify({ error: "Disk is full." }), {
       status: 500,
       headers: { "Content-Type": "application/json" }
     });
+  };
 
   const { container } = render(<ProfileForm initialProfile={createProfile()} />);
   const firstNameInput = container.querySelector('input[value="Avery"]') as HTMLInputElement;
@@ -193,6 +214,67 @@ test("save failures show a clear error", async () => {
   await user.type(firstNameInput, "Averylyn");
 
   await waitFor(() => assert.match(container.textContent ?? "", /Disk is full\./i), { timeout: 5000 });
+});
+
+test("synthetic QA profile can be loaded and the previous local profile can be restored", async () => {
+  const user = userEvent.setup({ document: globalThis.document });
+  let backupAvailable = false;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = getRequestUrl(input);
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+
+    if (url === "/api/profile/synthetic-qa" && (!init?.method || init.method === "GET")) {
+      return syntheticQaStatusResponse(backupAvailable);
+    }
+
+    if (url === "/api/profile/synthetic-qa" && init?.method === "POST") {
+      backupAvailable = true;
+      return new Response(
+        JSON.stringify({
+          profile: createSyntheticQaProfile(),
+          answerBank: [],
+          backupAvailable: true
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    if (url === "/api/profile/synthetic-qa" && init?.method === "DELETE") {
+      return new Response(
+        JSON.stringify({
+          profile: createProfile(),
+          answerBank: [],
+          backupAvailable: true
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  };
+
+  const view = render(<ProfileForm initialProfile={createProfile()} />);
+  await waitFor(() => assert.match(document.body.textContent ?? "", /Load synthetic QA profile/i));
+
+  await user.click(view.getByRole("button", { name: /Load synthetic QA profile/i }));
+
+  await waitFor(() => assert.match(document.body.textContent ?? "", /Synthetic QA profile and saved answers loaded locally\./i));
+  await waitFor(() => assert.match(document.body.textContent ?? "", /Synthetic QA profile loaded/i));
+  await waitFor(() => assert.match(document.body.textContent ?? "", /DO NOT SUBMIT/i));
+  await waitFor(() =>
+    assert.equal((view.getByDisplayValue("avery.example.test@example.com") as HTMLInputElement).value, "avery.example.test@example.com")
+  );
+
+  const restoreButton = view.getByRole("button", { name: /Restore previous local profile/i });
+  assert.equal(restoreButton.getAttribute("disabled"), null);
+
+  await user.click(restoreButton);
+
+  await waitFor(() => assert.match(document.body.textContent ?? "", /Previous local profile restored\./i));
+  await waitFor(() => assert.doesNotMatch(document.body.textContent ?? "", /avery\.example\.test@example\.com/i));
+  assert.equal(calls.includes("POST /api/profile/synthetic-qa"), true);
+  assert.equal(calls.includes("DELETE /api/profile/synthetic-qa"), true);
 });
 
 test("employment and education entries can be added and removed with confirmation", async () => {

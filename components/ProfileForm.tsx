@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check, ChevronDown, ChevronUp, LoaderCircle, PencilLine, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, FlaskConical, LoaderCircle, PencilLine, Plus, RotateCcw, Save, Trash2, Upload, X } from "lucide-react";
 import React from "react";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 
@@ -40,6 +40,7 @@ import {
 import { formatDateTime } from "@/lib/utils";
 import { ApplicantProfile, BehavioralStory, EducationEntry, ExperienceEntry, JobType } from "@/types";
 import { cn } from "@/lib/utils";
+import { isSyntheticQaProfile, SYNTHETIC_QA_PROFILE_LABEL } from "@/lib/syntheticQaProfile";
 
 import { CityAutocomplete } from "@/components/CityAutocomplete";
 import { FieldOfStudyAutocomplete } from "@/components/FieldOfStudyAutocomplete";
@@ -214,6 +215,10 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
   const [saveError, setSaveError] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [qaBusy, setQaBusy] = useState<"loading" | "restoring" | null>(null);
+  const [qaError, setQaError] = useState<string | null>(null);
+  const [qaMessage, setQaMessage] = useState<string | null>(null);
+  const [qaBackupAvailable, setQaBackupAvailable] = useState(false);
   const [editingExperienceId, setEditingExperienceId] = useState<string | null>(initialProfile.experience[0]?.id ?? null);
   const [editingEducationId, setEditingEducationId] = useState<string | null>(initialProfile.education[0]?.id ?? null);
   const [editingStoryId, setEditingStoryId] = useState<string | null>(initialProfile.stories[0]?.id ?? null);
@@ -229,6 +234,7 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
     setSaveState("saved");
     setSaveError(null);
     setResumeError(null);
+    setQaError(null);
     setEditingExperienceId(initialProfile.experience[0]?.id ?? null);
     setEditingEducationId(initialProfile.education[0]?.id ?? null);
     setEditingStoryId(initialProfile.stories[0]?.id ?? null);
@@ -240,6 +246,33 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
   const hasLinkErrors = Object.values(linkErrors).some(Boolean);
   const hasUnsavedChanges = serializedProfile !== lastSavedRef.current;
   const resumeName = getResumeFilename(profile);
+  const syntheticProfileActive = isSyntheticQaProfile(profile);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadBackupState = async () => {
+      try {
+        const response = await fetch("/api/profile/synthetic-qa");
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Could not read synthetic QA backup status.");
+        }
+        if (!cancelled) {
+          setQaBackupAvailable(Boolean(payload.backupAvailable));
+        }
+      } catch {
+        if (!cancelled) {
+          setQaBackupAvailable(false);
+        }
+      }
+    };
+
+    void loadBackupState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasUnsavedChanges) {
@@ -399,6 +432,66 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
     }
   }
 
+  async function loadSyntheticQaProfile() {
+    if (
+      !window.confirm(
+        "Load the synthetic QA profile and saved answers for local testing? ApplyPilot will preserve your previous local profile so you can restore it later."
+      )
+    ) {
+      return;
+    }
+
+    setQaBusy("loading");
+    setQaError(null);
+    setQaMessage(null);
+    try {
+      const response = await fetch("/api/profile/synthetic-qa", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not load the synthetic QA profile.");
+      }
+
+      const normalized = prepareProfileForSave(payload.profile);
+      lastSavedRef.current = JSON.stringify(normalized);
+      setProfile(payload.profile);
+      setSaveState("saved");
+      setSaveError(null);
+      setQaBackupAvailable(Boolean(payload.backupAvailable));
+      setQaMessage("Synthetic QA profile and saved answers loaded locally.");
+    } catch (error) {
+      setQaError(error instanceof Error ? error.message : "Could not load the synthetic QA profile.");
+    } finally {
+      setQaBusy(null);
+    }
+  }
+
+  async function restorePreviousProfile() {
+    if (!window.confirm("Restore the previous local profile and saved answers?")) return;
+
+    setQaBusy("restoring");
+    setQaError(null);
+    setQaMessage(null);
+    try {
+      const response = await fetch("/api/profile/synthetic-qa", { method: "DELETE" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not restore the previous local profile.");
+      }
+
+      const normalized = prepareProfileForSave(payload.profile);
+      lastSavedRef.current = JSON.stringify(normalized);
+      setProfile(payload.profile);
+      setSaveState("saved");
+      setSaveError(null);
+      setQaBackupAvailable(Boolean(payload.backupAvailable));
+      setQaMessage("Previous local profile restored.");
+    } catch (error) {
+      setQaError(error instanceof Error ? error.message : "Could not restore the previous local profile.");
+    } finally {
+      setQaBusy(null);
+    }
+  }
+
   const additionalQuestionEntries = Object.entries(additionalQuestionLabels) as Array<
     [keyof ApplicantProfile["additionalApplicationFacts"], string]
   >;
@@ -416,12 +509,43 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
             <p className="max-w-3xl text-sm leading-6 text-slate-300">
               ApplyPilot stores this information locally on this device. It does not claim encryption here, and it will not use optional demographic answers unless a form explicitly asks for them.
             </p>
+            {syntheticProfileActive ? (
+              <div className="rounded-[26px] border border-amber-300/40 bg-amber-300/10 px-4 py-4 text-sm leading-6 text-amber-50">
+                <div className="flex items-center gap-2 font-semibold">
+                  <FlaskConical className="h-4 w-4" />
+                  <span>{SYNTHETIC_QA_PROFILE_LABEL}</span>
+                </div>
+                <p className="mt-2">
+                  This fake profile is for local QA only. It should never be used to submit a real application.
+                </p>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center gap-3">
               <span className={cn("inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium", getSaveStateTone(saveState))}>
                 {saveState === "saved" ? <Check className="mr-2 h-4 w-4" /> : saveState === "saving" ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {getSaveStateLabel(saveState)}
               </span>
               {saveError ? <p className="text-sm text-rose-300">{saveError}</p> : <p className="text-sm text-slate-300">Autosave keeps quiet unless something needs your attention.</p>}
+              {qaMessage ? <p className="text-sm text-emerald-200">{qaMessage}</p> : null}
+              {qaError ? <p className="text-sm text-rose-300">{qaError}</p> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" className="secondary-button" disabled={qaBusy !== null || hasUnsavedChanges} onClick={loadSyntheticQaProfile}>
+                {qaBusy === "loading" ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <FlaskConical className="mr-2 h-4 w-4" />}
+                Load synthetic QA profile
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={qaBusy !== null || !qaBackupAvailable || !syntheticProfileActive}
+                onClick={restorePreviousProfile}
+              >
+                {qaBusy === "restoring" ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                Restore previous local profile
+              </button>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                QA data stays local and only loads when you choose it.
+              </p>
             </div>
           </div>
 
