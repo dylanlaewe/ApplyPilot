@@ -2016,7 +2016,13 @@ export function ProfileForm({ initialProfile }: { initialProfile: ApplicantProfi
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {additionalQuestionEntries.map(([key, label]) => {
-              const isTextField = key === "shiftAvailability" || key === "willingToTravelPercentage" || key === "preferredEmploymentType" || key === "referralSource" || key === "noticePeriod";
+              const isTextField =
+                key === "shiftAvailability" ||
+                key === "willingToTravelPercentage" ||
+                key === "preferredEmploymentType" ||
+                key === "referralSource" ||
+                key === "phoneDeviceType" ||
+                key === "noticePeriod";
               return (
                 <div key={key}>
                   <label className="field-label">{label}</label>

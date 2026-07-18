@@ -90,7 +90,7 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
   "previous_employment"
 ]);
 
-const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country", "state", "phone_country_code"]);
+const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country", "state", "phone_country_code", "phone_device_type"]);
 
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "work_authorization",
@@ -340,6 +340,19 @@ function clearFieldForManualReview(field: DetectedField, reason: string, status:
   }
 }
 
+function markOptionalWorkdayField(field: DetectedField, reason: string) {
+  field.status = "skipped";
+  field.reason = reason;
+  field.autoFillAllowed = false;
+  field.reviewCategory = "optional_skipped";
+  field.suggestedValue = "";
+  field.matchedOption = undefined;
+  if (field.verificationStatus === "verified") {
+    field.verificationStatus = "not_attempted";
+    field.verificationMessage = undefined;
+  }
+}
+
 export function isHighRiskWorkdayIntent(intent: FieldIntent) {
   return WORKDAY_HIGH_RISK_INTENTS.has(intent);
 }
@@ -446,6 +459,25 @@ export function applyWorkdaySafeModeRules(
         }
         next.matchedOption = exactPhoneCodeMatch.option;
       }
+    }
+
+    if (next.intent === "phone_device_type") {
+      if (!next.suggestedValue.trim()) {
+        clearFieldForManualReview(next, "No saved answer yet");
+        return next;
+      }
+
+      if (isFillableWorkdaySelectControl(next)) {
+        if (!next.matchedOption) {
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          return next;
+        }
+      }
+    }
+
+    if (next.intent === "phone_extension" && !next.suggestedValue.trim()) {
+      markOptionalWorkdayField(next, "Optional field with no saved value");
+      return next;
     }
 
     if (next.intent === "resume_upload" || next.type === "file") {

@@ -14,6 +14,7 @@ const STRUCTURED_INTENTS = new Set<FieldIntent>([
   "phone_country_code",
   "phone_number",
   "phone_extension",
+  "phone_device_type",
   "full_phone_number",
   "address_line_1",
   "address_line_2",

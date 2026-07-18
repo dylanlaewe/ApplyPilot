@@ -18,6 +18,11 @@ const INTENT_PATTERNS: IntentPattern[] = [
   { intent: "full_name", patterns: [/full name/, /\bname\b/, /your name/], allowedTypes: ["text"] },
   { intent: "phone_country_code", patterns: [/country code/, /calling code/, /dialing code/, /phone prefix/, /mobile country code/, /\+1/, /united states \(\+1\)/], allowedTypes: ["text", "select-one", "search"] },
   { intent: "phone_extension", patterns: [/\bextension\b/, /\bext\b/], allowedTypes: ["text", "number", "tel"] },
+  {
+    intent: "phone_device_type",
+    patterns: [/phone device type/, /phone type/, /type of phone/, /mobile or home phone/, /home or mobile phone/, /device type.*phone/],
+    allowedTypes: ["text", "select-one", "search"]
+  },
   { intent: "phone_number", patterns: [/phone number/, /mobile number/, /cell number/], allowedTypes: ["tel", "text", "number"] },
   { intent: "phone", patterns: [/\bphone\b/, /\bmobile\b/, /\bcell\b/, /\btel\b/], allowedTypes: ["tel", "text", "number"] },
   { intent: "address_line_1", patterns: [/address line 1/, /address 1/, /street address/, /residential address/, /home address/, /mailing address/], allowedTypes: ["text"] },

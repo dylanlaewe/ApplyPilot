@@ -72,6 +72,7 @@ function createProfile(overrides?: Partial<ApplicantProfile>): ApplicantProfile 
       ...base.additionalApplicationFacts,
       validDriversLicense: "yes",
       meetsMinimumWorkingAge: "yes",
+      phoneDeviceType: "Mobile",
       ...overrides?.additionalApplicationFacts
     },
     workHistoryComplete: true,
@@ -130,6 +131,7 @@ function field(intent: FieldIntent, partial: Partial<RawScannedField> = {}): Raw
     phone_country_code: "Country code",
     phone_number: "Phone number",
     phone_extension: "Extension",
+    phone_device_type: "Phone device type",
     full_phone_number: "Phone",
     address_line_1: "Address Line 1",
     address_line_2: "Address Line 2",
@@ -259,6 +261,16 @@ test("phone country code is not confused with extension", () => {
   const ext = suggestion("phone_extension", profile);
   assert.equal(code.suggestedValue, "+1");
   assert.equal(ext.suggestedValue, "77");
+});
+
+test("phone device type dropdown uses the saved exact device value", () => {
+  const result = suggestion("phone_device_type", createProfile(), {
+    type: "select-one",
+    selectOptions: ["Home", "Mobile", "Work"]
+  });
+
+  assert.equal(result.suggestedValue, "Mobile");
+  assert.equal(result.matchedOption, "Mobile");
 });
 
 test("generic Workday phone country-code pickers still suggest the exact country-code option", () => {

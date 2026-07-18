@@ -78,3 +78,18 @@ test("prepareLogicalFields ignores utility share buttons on listing pages", () =
 
   assert.equal(result.fields.length, 0);
 });
+
+test("prepareLogicalFields drops helper listbox labels like items selected", () => {
+  const result = prepareLogicalFields([
+    field({
+      type: "text",
+      controlType: "listbox",
+      role: "listbox",
+      label: "items selected",
+      nearbyText: "Country Phone Code Phone Number",
+      selectOptions: ["Canada (+1)", "United States of America (+1)", "United Kingdom (+44)"]
+    })
+  ]);
+
+  assert.equal(result.fields.length, 0);
+});

@@ -123,6 +123,7 @@ function createBlankAdditionalFacts(): AdditionalApplicationFacts {
     overtimeAvailability: "ask",
     preferredEmploymentType: "",
     referralSource: "",
+    phoneDeviceType: "",
     noticePeriod: ""
   };
 }

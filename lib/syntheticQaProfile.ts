@@ -148,7 +148,8 @@ export function createSyntheticQaProfile() {
     },
     additionalApplicationFacts: {
       ...base.additionalApplicationFacts,
-      referralSource: "Company Website"
+      referralSource: "Company Website",
+      phoneDeviceType: "Mobile"
     },
     workHistoryComplete: true,
     experience: [

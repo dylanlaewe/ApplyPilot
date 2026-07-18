@@ -76,6 +76,15 @@ export function deriveFieldAnswer(intent: FieldIntent, profile: ApplicantProfile
       return { value: knowledge.identity.phoneNationalNumber, source: "explicit_profile", reason: "Using your saved national phone number.", confidence: 0.98 };
     case "phone_extension":
       return { value: knowledge.identity.phoneExtension ?? "", source: "explicit_profile", reason: "Using your saved phone extension.", confidence: 0.98 };
+    case "phone_device_type":
+      return {
+        value: profile.additionalApplicationFacts.phoneDeviceType ?? "",
+        source: profile.additionalApplicationFacts.phoneDeviceType ? "explicit_profile" : "unknown",
+        reason: profile.additionalApplicationFacts.phoneDeviceType
+          ? "Using your saved phone device type."
+          : "No phone device type is saved yet.",
+        confidence: profile.additionalApplicationFacts.phoneDeviceType ? 0.97 : 0.35
+      };
     case "full_phone_number":
     case "phone":
       return field.type === "tel" && /country/.test(normalizeText(questionText))

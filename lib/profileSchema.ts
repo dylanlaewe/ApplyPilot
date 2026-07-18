@@ -208,6 +208,7 @@ export const additionalQuestionLabels: Record<keyof AdditionalApplicationFacts, 
   overtimeAvailability: "Overtime availability",
   preferredEmploymentType: "Preferred employment type",
   referralSource: "Referral source",
+  phoneDeviceType: "Phone device type",
   noticePeriod: "Current notice period"
 };
 

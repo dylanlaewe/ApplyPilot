@@ -209,6 +209,7 @@ export type FieldIntent =
   | "phone_country_code"
   | "phone_number"
   | "phone_extension"
+  | "phone_device_type"
   | "full_phone_number"
   | "address_line_1"
   | "address_line_2"
@@ -453,6 +454,7 @@ export interface AdditionalApplicationFacts {
   overtimeAvailability: YesNoNotApplicableChoice;
   preferredEmploymentType: string;
   referralSource: string;
+  phoneDeviceType: string;
   noticePeriod: string;
 }
 

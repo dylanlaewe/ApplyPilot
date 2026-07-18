@@ -172,3 +172,25 @@ test("workday phone country selectors stay classified as phone_country_code even
   assert.equal(listboxResult.intent, "phone_country_code");
   assert.ok(listboxResult.confidence >= 0.95);
 });
+
+test("workday phone device type selectors are classified separately from phone number fields", () => {
+  const field: RawScannedField = {
+    label: "Phone Device Type",
+    name: "phone_device_type",
+    domId: "phone_device_type",
+    type: "select-one",
+    selector: "#phone_device_type",
+    detectedValue: "Select One",
+    controlType: "menu_button",
+    role: "button",
+    nearbyText: "Phone Device Type",
+    selectOptions: ["Home", "Mobile", "Work"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "phone_device_type");
+  assert.ok(result.confidence >= 0.9);
+});

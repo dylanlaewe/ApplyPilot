@@ -28,7 +28,7 @@ const INTERNAL_ID_PATTERNS = [
 ];
 
 const GENERATED_CLASS_PATTERN = /\b[a-z]+(?:[-_][a-z0-9]+){3,}\b/gi;
-const GENERIC_LABELS = new Set(["select", "choose", "combobox", "option", "start typing", "type here"]);
+const GENERIC_LABELS = new Set(["select", "choose", "combobox", "option", "start typing", "type here", "items selected"]);
 const UTILITY_CONTROL_PATTERNS = [/^share(?: this job)?$/i, /^copy link$/i, /^share job$/i];
 function cleanWhitespace(value: string | null | undefined) {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -149,7 +149,17 @@ function looksLikeChoiceField(field: RawScannedField) {
   return field.type === "radio" || field.type === "checkbox" || field.controlType === "radio" || field.controlType === "checkbox";
 }
 
+function looksLikeSelectionHelperControl(field: RawScannedField) {
+  const label = sanitizeFieldLabel(field.label || field.explicitLabel || field.ariaLabel || field.nearbyText);
+  if (normalizeText(label) !== "items selected") return false;
+  return ["listbox", "menu_button", "custom_select", "aria_combobox", "autocomplete"].includes(field.controlType || "") || field.role === "listbox";
+}
+
 function looksLikeUtilityControl(field: RawScannedField) {
+  if (looksLikeSelectionHelperControl(field)) {
+    return true;
+  }
+
   if (!["menu_button", "custom_select", "listbox"].includes(field.controlType || "")) {
     return false;
   }
@@ -339,6 +349,7 @@ export function deduplicateDetectedFields(fields: RawScannedField[]) {
 export function prepareLogicalFields(fields: RawScannedField[]) {
   const rawCandidates = fields.length;
   const sanitized = fields
+    .filter((field) => !looksLikeSelectionHelperControl(field))
     .map((field) => {
       const logical = deriveLogicalLabel(field);
       return {
@@ -387,6 +398,7 @@ export function prepareLogicalFields(fields: RawScannedField[]) {
               labelSource: "structure_fallback"
             };
           })
+          .filter((field) => !isDomNoiseLabel(field.label))
       : sanitized;
   const grouped = groupChoiceControls(fallbackSanitized);
   const deduped = deduplicateDetectedFields(grouped.fields);

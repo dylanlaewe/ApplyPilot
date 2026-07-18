@@ -2,7 +2,7 @@ import { DetectedField } from "@/types";
 
 import { normalizeText } from "@/lib/utils";
 
-const PHONE_INTENTS = new Set(["phone", "phone_number", "full_phone_number", "phone_country_code", "phone_extension"]);
+const PHONE_INTENTS = new Set(["phone", "phone_number", "full_phone_number", "phone_country_code", "phone_extension", "phone_device_type"]);
 
 function comparableValue(value: string, field: Pick<DetectedField, "intent">) {
   const trimmed = value.trim();

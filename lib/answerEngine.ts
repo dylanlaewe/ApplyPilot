@@ -126,6 +126,10 @@ function maybeMatchVisibleOption(intent: FieldIntent, field: RawScannedField, ca
     );
   }
 
+  if (intent === "phone_device_type") {
+    return matchTextOption(options, candidate, "Matched phone device type option.");
+  }
+
   return matchStateOrCountryOption(options, candidate) ?? matchTextOption(options, candidate);
 }
 

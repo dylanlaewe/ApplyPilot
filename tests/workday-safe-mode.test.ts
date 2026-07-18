@@ -209,7 +209,7 @@ test("Workday country dropdowns remain manual when no exact safe option exists",
 });
 
 test("Workday state and phone country code dropdowns stay eligible only with exact safe matches", () => {
-  const [state, phoneCountryCode] = applyWorkdaySafeModeRules([
+  const [state, phoneCountryCode, phoneDeviceType] = applyWorkdaySafeModeRules([
     field({
       label: "State",
       type: "select-one",
@@ -225,6 +225,15 @@ test("Workday state and phone country code dropdowns stay eligible only with exa
       intent: "phone_country_code",
       suggestedValue: "United States (+1)",
       selectOptions: ["Canada (+1)", "United States (+1)"]
+    }),
+    field({
+      label: "Phone Device Type",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "phone_device_type",
+      suggestedValue: "Mobile",
+      matchedOption: "Mobile",
+      selectOptions: ["Home", "Mobile", "Work"]
     })
   ]);
 
@@ -235,6 +244,10 @@ test("Workday state and phone country code dropdowns stay eligible only with exa
   assert.equal(phoneCountryCode.status, "needs_review");
   assert.match(phoneCountryCode.reason, /Safe to autofill on this Workday page/i);
   assert.equal(phoneCountryCode.matchedOption, "United States (+1)");
+
+  assert.equal(phoneDeviceType.status, "needs_review");
+  assert.match(phoneDeviceType.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(phoneDeviceType.matchedOption, "Mobile");
 });
 
 test("Workday phone country code dropdowns stay manual when only unsafe +1 variants exist", () => {
@@ -253,6 +266,40 @@ test("Workday phone country code dropdowns stay manual when only unsafe +1 varia
   assert.equal(phoneCountryCode.suggestedValue, "");
   assert.equal(phoneCountryCode.reason, "Needs an exact dropdown mapping");
   assert.equal(phoneCountryCode.matchedOption, undefined);
+});
+
+test("optional Workday phone extension is skipped when no saved extension exists", () => {
+  const [extension] = applyWorkdaySafeModeRules([
+    field({
+      label: "Phone Extension",
+      type: "text",
+      intent: "phone_extension",
+      suggestedValue: "",
+      autoFillAllowed: false
+    })
+  ]);
+
+  assert.equal(extension.status, "skipped");
+  assert.equal(extension.reviewCategory, "optional_skipped");
+  assert.equal(extension.reason, "Optional field with no saved value");
+});
+
+test("Workday phone device type stays manual when no saved answer exists", () => {
+  const [deviceType] = applyWorkdaySafeModeRules([
+    field({
+      label: "Phone Device Type",
+      type: "select-one",
+      controlType: "native_select",
+      intent: "phone_device_type",
+      suggestedValue: "",
+      autoFillAllowed: false,
+      selectOptions: ["Home", "Mobile", "Work"]
+    })
+  ]);
+
+  assert.equal(deviceType.status, "needs_review");
+  assert.equal(deviceType.reason, "No saved answer yet");
+  assert.equal(deviceType.suggestedValue, "");
 });
 
 test("saved Workday textarea answers stay eligible for a safe pass", () => {
