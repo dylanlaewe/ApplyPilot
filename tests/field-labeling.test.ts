@@ -93,3 +93,21 @@ test("prepareLogicalFields drops helper listbox labels like items selected", () 
 
   assert.equal(result.fields.length, 0);
 });
+
+test("prepareLogicalFields ignores value-only required labels and uses the real Workday question text", () => {
+  const result = prepareLogicalFields([
+    field({
+      type: "button",
+      controlType: "menu_button",
+      role: "button",
+      label: "No Required",
+      detectedValue: "No",
+      questionContainerText: "Do you have any affiliation with Brown University?",
+      nearbyText: "Do you have any affiliation with Brown University? No Required",
+      selectOptions: ["Yes", "No"]
+    })
+  ]);
+
+  assert.equal(result.fields.length, 1);
+  assert.equal(result.fields[0].label, "Do you have any affiliation with Brown University?");
+});

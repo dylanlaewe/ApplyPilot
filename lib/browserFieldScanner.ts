@@ -80,6 +80,7 @@ const BROWSER_FIELD_SCANNER_SOURCE = String.raw`
     const text = normalizeFragment(value).toLowerCase();
     if (!text) return true;
     if (/^(select|select\.\.\.|choose|start typing|type here|combobox|option|no results found|results found)$/i.test(text)) return true;
+    if (/^(select one|choose one|items selected|required|optional|one|one required|yes|yes required|no|no required)$/i.test(text)) return true;
     if (/^(attach|dropbox|google drive|enter manually)$/i.test(text)) return true;
     if (/^accepted file types:/i.test(text)) return true;
     if (/^question[_-]?\d+$/i.test(text) || /^field[_-]?\d+$/i.test(text) || /^input[_-]?\d+$/i.test(text)) return true;

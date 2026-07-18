@@ -1,21 +1,29 @@
 import { RawScannedField } from "@/types";
 
+import { isDomNoiseLabel, sanitizeFieldLabel } from "@/lib/fieldLabeling";
+
 export function inferFieldMetadata(field: RawScannedField) {
   const type = field.type || "text";
   const controlType = field.controlType ?? "unknown";
+  const labelCandidates = [
+    field.explicitLabel,
+    field.ariaLabelledByText,
+    field.groupLabel || field.legendText,
+    field.questionContainerText,
+    field.ariaLabel,
+    field.nearbyText,
+    field.label,
+    field.placeholder,
+    field.name,
+    field.domId
+  ];
+  const label =
+    labelCandidates
+      .map((value) => sanitizeFieldLabel(value))
+      .find((value) => value && !isDomNoiseLabel(value)) || "Untitled field";
 
   return {
-    label:
-      field.label ||
-      field.explicitLabel ||
-      field.ariaLabelledByText ||
-      field.ariaLabel ||
-      field.legendText ||
-      field.questionContainerText ||
-      field.placeholder ||
-      field.name ||
-      field.domId ||
-      "Untitled field",
+    label,
     type,
     controlType,
     isSelect: type === "select-one" || type === "select-multiple",

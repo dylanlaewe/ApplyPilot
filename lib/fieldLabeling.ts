@@ -28,10 +28,38 @@ const INTERNAL_ID_PATTERNS = [
 ];
 
 const GENERATED_CLASS_PATTERN = /\b[a-z]+(?:[-_][a-z0-9]+){3,}\b/gi;
-const GENERIC_LABELS = new Set(["select", "choose", "combobox", "option", "start typing", "type here", "items selected"]);
+const GENERIC_LABELS = new Set([
+  "select",
+  "select one",
+  "choose",
+  "choose one",
+  "combobox",
+  "option",
+  "start typing",
+  "type here",
+  "items selected",
+  "required",
+  "optional",
+  "one",
+  "one required",
+  "yes",
+  "yes required",
+  "no",
+  "no required"
+]);
 const UTILITY_CONTROL_PATTERNS = [/^share(?: this job)?$/i, /^copy link$/i, /^share job$/i];
 function cleanWhitespace(value: string | null | undefined) {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function stripTrailingRequirementBadge(text: string) {
+  const tokens = cleanWhitespace(text).split(" ").filter(Boolean);
+  if (tokens.length <= 1) return cleanWhitespace(text);
+  const last = normalizeText(tokens[tokens.length - 1]);
+  if ((last === "required" || last === "optional") && tokens.length >= 3) {
+    return cleanWhitespace(tokens.slice(0, -1).join(" "));
+  }
+  return cleanWhitespace(text);
 }
 
 function stripNoise(text: string) {
@@ -82,7 +110,7 @@ function cleanupPunctuation(text: string) {
 export function sanitizeFieldLabel(value: string | null | undefined) {
   const stripped = stripNoise(value ?? "");
   const collapsed = collapseRepeatedTokens(stripped);
-  const cleaned = cleanupPunctuation(collapsed);
+  const cleaned = cleanupPunctuation(stripTrailingRequirementBadge(collapsed));
   return cleaned.replace(/^[*•\-\s]+/g, "").replace(/[,:;.\-/_\s]+$/g, "").trim();
 }
 
@@ -218,6 +246,10 @@ function normalizeChoiceOption(field: RawScannedField) {
   return sanitizeFieldLabel(field.optionLabel || field.label || field.detectedValue);
 }
 
+function isChoiceOptionLabel(value: string) {
+  return /^(yes|no)$/i.test(sanitizeFieldLabel(value));
+}
+
 function stripTrailingChoiceOption(text: string, option: string) {
   const cleanedText = sanitizeFieldLabel(text);
   const cleanedOption = sanitizeFieldLabel(option);
@@ -282,7 +314,7 @@ export function groupChoiceControls(fields: RawScannedField[]) {
     groupedControls += group.length - 1;
     const first = group[0];
     const options = Array.from(
-      new Set(group.map(normalizeChoiceOption).filter((option) => option && !isDomNoiseLabel(option)))
+      new Set(group.map(normalizeChoiceOption).filter((option) => option && (!isDomNoiseLabel(option) || isChoiceOptionLabel(option))))
     );
     const logicalLabel = deriveGroupedChoiceLabel(group, options) || first.label;
 
@@ -294,7 +326,7 @@ export function groupChoiceControls(fields: RawScannedField[]) {
       detectedValue: group
         .filter((field) => cleanWhitespace(field.detectedValue).toLowerCase() === "checked")
         .map(normalizeChoiceOption)
-        .filter(Boolean)
+        .filter((option) => Boolean(option) && (!isDomNoiseLabel(option) || isChoiceOptionLabel(option)))
         .join(", "),
       labelSource: "grouped_choice"
     });

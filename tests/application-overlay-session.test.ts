@@ -125,3 +125,19 @@ test("overlay buckets show Workday section placeholders as needs your input inst
   assert.equal(unresolved[1]?.status, "Needs your input");
   assert.equal(unresolved[1]?.controlType, "file upload section");
 });
+
+test("overlay buckets fall back to semantic question text when the raw label is a value-only required fragment", () => {
+  const { unresolved } = buildOverlayFieldBuckets([
+    field({
+      label: "No Required",
+      questionText: "Do you have any affiliation with Brown University?",
+      nearbyText: "Do you have any affiliation with Brown University?",
+      detectedValue: "No",
+      status: "needs_review",
+      controlType: "menu_button",
+      answerSource: "unknown"
+    })
+  ]);
+
+  assert.equal(unresolved[0]?.label, "Do you have any affiliation with Brown University?");
+});

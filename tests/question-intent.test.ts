@@ -194,3 +194,26 @@ test("workday phone device type selectors are classified separately from phone n
   assert.equal(result.intent, "phone_device_type");
   assert.ok(result.confidence >= 0.9);
 });
+
+test("workday menu buttons do not derive intent from yes-required style current values", () => {
+  const field: RawScannedField = {
+    label: "Yes Required",
+    name: "",
+    domId: "",
+    type: "button",
+    selector: "#authorization_menu",
+    detectedValue: "Yes",
+    controlType: "menu_button",
+    role: "button",
+    questionContainerText: "Are you authorized to work in the United States?",
+    nearbyText: "Are you authorized to work in the United States? Yes Required",
+    selectOptions: ["Yes", "No"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "work_authorization");
+  assert.ok(result.confidence >= 0.9);
+});

@@ -30,7 +30,19 @@ type OverlayUnresolvedSummary = OverlayFieldSummary & {
   reason: string;
 };
 
-const GENERIC_OVERLAY_LABELS = [/^items selected$/i, /^select one$/i, /^choose one$/i];
+const GENERIC_OVERLAY_LABELS = [
+  /^items selected$/i,
+  /^select one$/i,
+  /^choose one$/i,
+  /^required$/i,
+  /^optional$/i,
+  /^one$/i,
+  /^one required$/i,
+  /^yes$/i,
+  /^yes required$/i,
+  /^no$/i,
+  /^no required$/i
+];
 const OPTIONAL_DEBUG_ONLY_INTENTS = new Set(["phone_extension", "address_line_2"]);
 
 function sourceLabel(field: DetectedField) {
@@ -133,7 +145,8 @@ function shouldHideOverlayField(field: DetectedField) {
     return true;
   }
 
-  return isGenericOverlayLabel((field.label || "").trim()) || isGenericOverlayLabel(bestOverlayLabel(field));
+  const semanticLabel = bestOverlayLabel(field);
+  return isGenericOverlayLabel(semanticLabel) || (isGenericOverlayLabel((field.label || "").trim()) && !field.questionText?.trim() && !field.nearbyText?.trim());
 }
 
 function unresolvedReason(field: DetectedField) {
