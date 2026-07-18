@@ -7,6 +7,7 @@ import { createAuditEntry } from "@/lib/auditLog";
 import { applyWaitingUpdate, prepareDetectedFields, type PreparedDetectedFields } from "@/lib/autofillPreparation";
 import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
 import { fillField, launchBrowserSession, recoverFieldSelector, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
+import { ensureWorkdayRepeatableSectionReady } from "@/lib/workdayRepeatableSections";
 import { humanizeError } from "@/lib/safety";
 import {
   applyWorkdaySafeModeRules,
@@ -235,6 +236,37 @@ async function prepareWorkdaySafeFields(
   const resumedAfterBarrier = workdayBarrier.formReached && Boolean(state.lastBarrierKind && state.lastBarrierKind !== "form_reached");
   state.lastBarrierKind = workdayBarrier.kind;
   recordDiagnostic?.("barrier_kind", workdayBarrier.kind);
+
+  let preparedResult = prepared;
+  if (!prepared.waiting && workdayBarrier.formReached) {
+    const hasWorkExperiencePlaceholder = preparedResult.detectedFields.some(
+      (field) => field.controlType === "repeatable_section" && /work experience/i.test(field.label || field.questionText || "")
+    );
+
+    if (hasWorkExperiencePlaceholder) {
+      const sectionResult = await ensureWorkdayRepeatableSectionReady(runtime.page, "work_experience");
+      recordDiagnostic?.("work_experience_section", sectionResult.reason);
+
+      if (sectionResult.opened) {
+        recordApplicationTransitionEvent(sessionId, "workday_work_experience_opened", sectionResult.reason);
+        preparedResult = await prepareDetectedFields(sessionId, runtime.page, session);
+      } else if (!sectionResult.alreadyVisible) {
+        preparedResult = {
+          ...preparedResult,
+          detectedFields: preparedResult.detectedFields.map((field) =>
+            field.controlType === "repeatable_section" && /work experience/i.test(field.label || field.questionText || "")
+              ? {
+                  ...field,
+                  reason: sectionResult.reason
+                }
+              : field
+          )
+        };
+      }
+    }
+  }
+
+  const activePrepared = preparedResult;
   await writeWorkdayOverlayDiagnostic({
     sessionId,
     eventLog: getApplicationTransitionDiagnostics(sessionId).eventLog.map((item) => ({ event: item.event, detail: item.detail })),
@@ -250,9 +282,9 @@ async function prepareWorkdaySafeFields(
     detectedAt: new Date().toISOString()
   }).catch(() => undefined);
 
-  if (prepared.waiting) {
+    if (activePrepared.waiting) {
     if (workdayBarrier.kind === "account_creation_required") {
-      const accountFields = prepareWorkdayAccountAssistFields(prepared.detectedFields);
+      const accountFields = prepareWorkdayAccountAssistFields(activePrepared.detectedFields);
       const assistFields = accountFields.filter(
         (field) =>
           field.autoFillAllowed &&
@@ -271,18 +303,18 @@ async function prepareWorkdaySafeFields(
           statusMessage: workdayBarrier.message,
           nextAction: workdayBarrier.nextAction,
           detectedFields: accountFields,
-          warnings: prepared.pageSummary.warnings,
-          finalSubmitButtons: prepared.pageSummary.finalSubmitButtons,
-          captchaDetection: prepared.captchaDetection,
+          warnings: activePrepared.pageSummary.warnings,
+          finalSubmitButtons: activePrepared.pageSummary.finalSubmitButtons,
+          captchaDetection: activePrepared.captchaDetection,
           currentPageUrl: runtime.page.url(),
           browserStatus: "open",
-          jobContext: prepared.jobContext,
-          generatorHealth: prepared.generatorHealth
+          jobContext: activePrepared.jobContext,
+          generatorHealth: activePrepared.generatorHealth
         }));
         return {
           runtime,
           prepared: {
-            ...prepared,
+            ...activePrepared,
             detectedFields: accountFields
           },
           pageIdentity: pageIdentity.identity,
@@ -298,21 +330,21 @@ async function prepareWorkdaySafeFields(
 
     return {
       runtime,
-      prepared,
+      prepared: activePrepared,
       waitingSession: await applyWaitingUpdate(
         sessionId,
-        prepared.waiting,
-        prepared.pageSummary,
-        prepared.captchaDetection,
+        activePrepared.waiting,
+        activePrepared.pageSummary,
+        activePrepared.captchaDetection,
         runtime.page.url(),
         isRetry,
-        prepared.generatorRuntimeHealth
+        activePrepared.generatorRuntimeHealth
       )
     };
   }
 
   const pageIdentity = await readWorkdayPageIdentity(runtime.page);
-  const safeFields = applyWorkdaySafeModeRules(prepared.detectedFields, {
+  const safeFields = applyWorkdaySafeModeRules(activePrepared.detectedFields, {
     verifiedFieldKeys: state.pageIdentity === pageIdentity.identity ? state.verifiedFieldKeys : new Set<string>()
   });
   const metrics = await readWorkdayFieldMetrics(runtime.page, safeFields);
@@ -328,18 +360,18 @@ async function prepareWorkdaySafeFields(
     statusMessage: "Ready for a controlled Workday pass.",
     nextAction: "Use the ApplyPilot control in the application window to fill safe fields or capture this page.",
     detectedFields: safeFields,
-    warnings: prepared.pageSummary.warnings,
-    finalSubmitButtons: prepared.pageSummary.finalSubmitButtons,
-    captchaDetection: prepared.captchaDetection,
+    warnings: activePrepared.pageSummary.warnings,
+    finalSubmitButtons: activePrepared.pageSummary.finalSubmitButtons,
+    captchaDetection: activePrepared.captchaDetection,
     currentPageUrl: runtime.page.url(),
     browserStatus: "open",
-    jobContext: prepared.jobContext,
-    generatorHealth: prepared.generatorHealth
+    jobContext: activePrepared.jobContext,
+    generatorHealth: activePrepared.generatorHealth
   }));
 
   return {
     runtime,
-    prepared,
+    prepared: activePrepared,
     pageIdentity: pageIdentity.identity,
     safeFields,
     plan,
