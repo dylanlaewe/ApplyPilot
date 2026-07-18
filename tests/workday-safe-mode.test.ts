@@ -135,7 +135,7 @@ test("phone country code matching only accepts exact approved US options", () =>
   assert.equal(rejected, null);
 });
 
-test("high-risk Workday fields fail closed and exact country dropdowns stay eligible", () => {
+test("exact saved Workday choice answers stay eligible while exact country dropdowns remain safe", () => {
   const [country, veteran, sponsorship, workAuthorization] = applyWorkdaySafeModeRules([
     field({
       label: "Country",
@@ -147,29 +147,32 @@ test("high-risk Workday fields fail closed and exact country dropdowns stay elig
     }),
     field({
       label: "Veteran status",
-      type: "select-one",
-      controlType: "native_select",
+      type: "radio",
+      controlType: "radio",
       intent: "eeoc_veteran",
       suggestedValue: "I am not a veteran",
       sensitivity: "sensitive",
+      matchedOption: "I AM NOT A VETERAN",
       selectOptions: ["I AM NOT A VETERAN", "Prefer not to identify"]
     }),
     field({
       label: "Will you require sponsorship?",
-      type: "select-one",
-      controlType: "native_select",
+      type: "radio",
+      controlType: "radio",
       intent: "sponsorship",
       suggestedValue: "No",
       sensitivity: "sensitive",
+      matchedOption: "No",
       selectOptions: ["Yes", "No"]
     }),
     field({
       label: "Work authorization",
-      type: "select-one",
-      controlType: "native_select",
+      type: "radio",
+      controlType: "radio",
       intent: "work_authorization",
       suggestedValue: "Yes",
       sensitivity: "sensitive",
+      matchedOption: "Yes",
       selectOptions: ["Yes", "No"]
     })
   ]);
@@ -179,15 +182,67 @@ test("high-risk Workday fields fail closed and exact country dropdowns stay elig
   assert.match(country.reason, /Safe to autofill on this Workday page/i);
   assert.equal(country.matchedOption, "United States");
 
-  assert.equal(veteran.status, "sensitive");
-  assert.equal(veteran.suggestedValue, "");
-  assert.equal(veteran.reason, "Sensitive question requires your review");
+  assert.equal(veteran.status, "needs_review");
+  assert.equal(veteran.suggestedValue, "I am not a veteran");
+  assert.match(veteran.reason, /Safe to autofill on this Workday page/i);
 
-  assert.equal(sponsorship.status, "sensitive");
-  assert.equal(sponsorship.suggestedValue, "");
+  assert.equal(sponsorship.status, "needs_review");
+  assert.equal(sponsorship.suggestedValue, "No");
+  assert.match(sponsorship.reason, /Safe to autofill on this Workday page/i);
 
-  assert.equal(workAuthorization.status, "sensitive");
-  assert.equal(workAuthorization.suggestedValue, "");
+  assert.equal(workAuthorization.status, "needs_review");
+  assert.equal(workAuthorization.suggestedValue, "Yes");
+  assert.match(workAuthorization.reason, /Safe to autofill on this Workday page/i);
+});
+
+test("saved Brown-style Workday choice questions stay eligible only with an exact saved option match", () => {
+  const [affiliation, referralSource, unresolvedSponsorship] = applyWorkdaySafeModeRules([
+    field({
+      label: "Do you have any affiliation with Brown University?",
+      type: "radio",
+      controlType: "radio",
+      intent: "unknown",
+      sensitivity: "review",
+      suggestedValue: "No",
+      matchedOption: "No",
+      answerSource: "answer_bank",
+      selectOptions: ["Yes", "No"]
+    }),
+    field({
+      label: "How Did You Hear About Us?",
+      type: "button",
+      controlType: "menu_button",
+      role: "button",
+      intent: "referral_source",
+      sensitivity: "review",
+      suggestedValue: "Company Website",
+      matchedOption: "Company Website",
+      answerSource: "answer_bank",
+      selectOptions: ["Employee Referral", "Company Website", "Indeed"]
+    }),
+    field({
+      label: "Will you require sponsorship?",
+      type: "radio",
+      controlType: "radio",
+      intent: "sponsorship",
+      sensitivity: "sensitive",
+      suggestedValue: "No",
+      answerSource: "explicit_profile",
+      selectOptions: ["Yes", "No"]
+    })
+  ]);
+
+  assert.equal(affiliation.status, "needs_review");
+  assert.match(affiliation.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(affiliation.suggestedValue, "No");
+
+  assert.equal(referralSource.status, "needs_review");
+  assert.match(referralSource.reason, /Safe to autofill on this Workday page/i);
+  assert.equal(referralSource.suggestedValue, "Company Website");
+
+  assert.equal(unresolvedSponsorship.status, "sensitive");
+  assert.equal(unresolvedSponsorship.suggestedValue, "");
+  assert.equal(unresolvedSponsorship.reason, "Sensitive question requires your review");
 });
 
 test("Workday country dropdowns remain manual when no exact safe option exists", () => {

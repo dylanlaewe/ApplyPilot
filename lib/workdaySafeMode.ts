@@ -92,6 +92,14 @@ const WORKDAY_REPEATABLE_SECTION_INTENTS = new Set<FieldIntent>([
 
 const WORKDAY_SAFE_SELECT_INTENTS = new Set<FieldIntent>(["education_degree", "country", "state", "phone_country_code", "phone_device_type"]);
 
+const WORKDAY_SAFE_SAVED_CHOICE_SOURCES = new Set([
+  "explicit_profile",
+  "derived_profile",
+  "formatted_profile",
+  "answer_bank",
+  "manual_user_answer"
+]);
+
 const WORKDAY_HIGH_RISK_INTENTS = new Set<FieldIntent>([
   "work_authorization",
   "work_authorization_category",
@@ -398,6 +406,10 @@ function isEligibleWorkdayTextareaControl(field: DetectedField) {
   );
 }
 
+function isFillableWorkdayChoiceControl(field: DetectedField) {
+  return field.type === "radio" || field.type === "checkbox" || field.controlType === "radio" || field.controlType === "checkbox";
+}
+
 function isFillableWorkdaySelectControl(field: DetectedField) {
   return (
     ["native_select", "aria_combobox", "autocomplete", "listbox", "menu_button", "custom_select"].includes(field.controlType || "") ||
@@ -407,9 +419,39 @@ function isFillableWorkdaySelectControl(field: DetectedField) {
   );
 }
 
+function hasExactWorkdayChoiceMatch(field: DetectedField) {
+  return Boolean(field.matchedOption);
+}
+
+function isEligibleWorkdaySensitiveChoiceField(field: DetectedField) {
+  return (
+    isFillableWorkdayChoiceControl(field) &&
+    Boolean(field.suggestedValue.trim()) &&
+    field.autoFillAllowed &&
+    field.confidence >= SAFE_AUTOFILL_THRESHOLD &&
+    field.answerSource === "explicit_profile" &&
+    hasExactWorkdayChoiceMatch(field)
+  );
+}
+
+function isEligibleWorkdaySavedChoiceField(field: DetectedField) {
+  return (
+    (isFillableWorkdayChoiceControl(field) || isFillableWorkdaySelectControl(field)) &&
+    Boolean(field.suggestedValue.trim()) &&
+    field.autoFillAllowed &&
+    field.confidence >= SAFE_AUTOFILL_THRESHOLD &&
+    WORKDAY_SAFE_SAVED_CHOICE_SOURCES.has(field.answerSource) &&
+    hasExactWorkdayChoiceMatch(field)
+  );
+}
+
 function isEligibleWorkdaySafeField(field: DetectedField) {
   if (!field.suggestedValue.trim() || !field.autoFillAllowed || field.confidence < SAFE_AUTOFILL_THRESHOLD) {
     return false;
+  }
+
+  if ((isHighRiskWorkdayIntent(field.intent) || field.sensitivity === "sensitive") && isEligibleWorkdaySensitiveChoiceField(field)) {
+    return true;
   }
 
   if (WORKDAY_SAFE_TEXT_INTENTS.has(field.intent) && isFillableWorkdayTextControl(field)) {
@@ -417,6 +459,10 @@ function isEligibleWorkdaySafeField(field: DetectedField) {
   }
 
   if (isEligibleWorkdayTextareaControl(field)) {
+    return true;
+  }
+
+  if (!isHighRiskWorkdayIntent(field.intent) && field.sensitivity !== "sensitive" && isEligibleWorkdaySavedChoiceField(field)) {
     return true;
   }
 
@@ -516,6 +562,25 @@ export function applyWorkdaySafeModeRules(
       }
       markWorkdayResumeField(next, "Resume upload needs verification");
       return next;
+    }
+
+    if (isFillableWorkdayChoiceControl(next) || isFillableWorkdaySelectControl(next)) {
+      if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
+        if (!isEligibleWorkdaySensitiveChoiceField(next)) {
+          clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+          return next;
+        }
+
+        next.status = "needs_review";
+        next.reason = `${next.reason} Safe to autofill on this Workday page.`;
+        return next;
+      }
+
+      if (isEligibleWorkdaySavedChoiceField(next)) {
+        next.status = "needs_review";
+        next.reason = `${next.reason} Safe to autofill on this Workday page.`;
+        return next;
+      }
     }
 
     if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
