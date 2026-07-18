@@ -9,6 +9,7 @@ import { writeWorkdayOverlayDiagnostic } from "@/lib/autofillDiagnostics";
 import { fillField, launchBrowserSession, recoverFieldSelector, type BrowserRuntime, waitForPageReadiness } from "@/lib/playwrightSession";
 import { ensureWorkdayRepeatableSectionReady } from "@/lib/workdayRepeatableSections";
 import { humanizeError } from "@/lib/safety";
+import { createWorkdayTimingTracker } from "@/lib/workdayTiming";
 import {
   applyWorkdaySafeModeRules,
   beginWorkdayPass,
@@ -220,18 +221,20 @@ async function prepareWorkdaySafeFields(
   session: ApplicationSession,
   isRetry: boolean,
   runtime: BrowserRuntime,
+  timing: ReturnType<typeof createWorkdayTimingTracker>,
   recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<PreparedWorkdayWaitingState | PreparedWorkdaySafeState> {
   recordApplicationTransitionEvent(sessionId, "readiness_wait_started", runtime.page.url());
-  await waitForWorkdayStablePage(runtime.page);
+  await timing.measureStage("page_settle", () => waitForWorkdayStablePage(runtime.page));
   recordApplicationTransitionEvent(sessionId, "readiness_wait_completed", runtime.page.url());
-  await ensureWorkdayOverlayForSession(sessionId, runtime.page);
+  await timing.measureStage("overlay_ready", () => ensureWorkdayOverlayForSession(sessionId, runtime.page));
   recordApplicationTransitionEvent(sessionId, "overlay_confirmed", runtime.page.url());
   recordDiagnostic?.("page_resolved", runtime.page.url());
 
-  const prepared = await prepareDetectedFields(sessionId, runtime.page, session);
-  const workdayBarrier =
-    prepared.workdayBarrier ?? (await detectWorkdayBarrier(runtime.page, { captchaDetection: prepared.captchaDetection }));
+  const prepared = await timing.measureStage("initial_scan", () => prepareDetectedFields(sessionId, runtime.page, session));
+  const workdayBarrier = await timing.measureStage("barrier_detection", async () =>
+    prepared.workdayBarrier ?? (await detectWorkdayBarrier(runtime.page, { captchaDetection: prepared.captchaDetection }))
+  );
   const state = resumeWorkdaySafeMode(sessionId);
   const resumedAfterBarrier = workdayBarrier.formReached && Boolean(state.lastBarrierKind && state.lastBarrierKind !== "form_reached");
   state.lastBarrierKind = workdayBarrier.kind;
@@ -266,12 +269,16 @@ async function prepareWorkdaySafeFields(
       );
       if (!hasPlaceholder) continue;
 
-      const sectionResult = await ensureWorkdayRepeatableSectionReady(runtime.page, section.key);
+      const sectionResult = await timing.measureStage("repeatable_section_open", () =>
+        ensureWorkdayRepeatableSectionReady(runtime.page, section.key)
+      );
       recordDiagnostic?.(section.diagnosticKey, sectionResult.reason);
 
       if (sectionResult.opened) {
         recordApplicationTransitionEvent(sessionId, section.eventName, sectionResult.reason);
-        preparedResult = await prepareDetectedFields(sessionId, runtime.page, session);
+        preparedResult = await timing.measureStage("repeatable_section_rescan", () =>
+          prepareDetectedFields(sessionId, runtime.page, session)
+        );
         continue;
       }
 
@@ -304,7 +311,8 @@ async function prepareWorkdaySafeFields(
     tenant: workdayBarrier.tenant,
     formReached: workdayBarrier.formReached,
     resumedAfterBarrier,
-    detectedAt: new Date().toISOString()
+    detectedAt: new Date().toISOString(),
+    timing: timing.snapshot()
   }).catch(() => undefined);
 
     if (activePrepared.waiting) {
@@ -318,9 +326,9 @@ async function prepareWorkdaySafeFields(
           !field.isDisabled
       );
       if (assistFields.length > 0) {
-        const pageIdentity = await readWorkdayPageIdentity(runtime.page);
-        const metrics = await readWorkdayFieldMetrics(runtime.page, assistFields);
-        const plan = buildWorkdayExecutionPlan(assistFields, metrics);
+        const pageIdentity = await timing.measureStage("page_identity", () => readWorkdayPageIdentity(runtime.page));
+        const metrics = await timing.measureStage("field_metrics", () => readWorkdayFieldMetrics(runtime.page, assistFields));
+        const plan = await timing.measureStage("plan_build", () => Promise.resolve(buildWorkdayExecutionPlan(assistFields, metrics)));
         await updateApplicationSession(sessionId, (current) => ({
           ...current,
           atsProvider: "workday",
@@ -368,12 +376,16 @@ async function prepareWorkdaySafeFields(
     };
   }
 
-  const pageIdentity = await readWorkdayPageIdentity(runtime.page);
-  const safeFields = applyWorkdaySafeModeRules(activePrepared.detectedFields, {
-    verifiedFieldKeys: state.pageIdentity === pageIdentity.identity ? state.verifiedFieldKeys : new Set<string>()
-  });
-  const metrics = await readWorkdayFieldMetrics(runtime.page, safeFields);
-  const plan = buildWorkdayExecutionPlan(safeFields, metrics);
+  const pageIdentity = await timing.measureStage("page_identity", () => readWorkdayPageIdentity(runtime.page));
+  const safeFields = await timing.measureStage("safe_mode_rules", () =>
+    Promise.resolve(
+      applyWorkdaySafeModeRules(activePrepared.detectedFields, {
+        verifiedFieldKeys: state.pageIdentity === pageIdentity.identity ? state.verifiedFieldKeys : new Set<string>()
+      })
+    )
+  );
+  const metrics = await timing.measureStage("field_metrics", () => readWorkdayFieldMetrics(runtime.page, safeFields));
+  const plan = await timing.measureStage("plan_build", () => Promise.resolve(buildWorkdayExecutionPlan(safeFields, metrics)));
   recordApplicationTransitionEvent(sessionId, "field_plan_created", `${plan.length} safe Workday field(s)`);
   recordDiagnostic?.("plan_created", `${plan.length} planned field(s)`);
   recordDiagnostic?.("safe_fields_count", String(safeFields.length));
@@ -423,7 +435,10 @@ export async function runWorkdaySafePass(
   runtime: BrowserRuntime,
   recordDiagnostic?: (event: string, detail?: string) => void
 ): Promise<ApplicationSession> {
-  const prepared = await prepareWorkdaySafeFields(sessionId, session, isRetry, runtime, recordDiagnostic);
+  const timing = createWorkdayTimingTracker();
+  const prepared = await timing.measureStage("prepare_safe_fields", () =>
+    prepareWorkdaySafeFields(sessionId, session, isRetry, runtime, timing, recordDiagnostic)
+  );
   if ("waitingSession" in prepared) {
     return prepared.waitingSession;
   }
@@ -456,70 +471,81 @@ export async function runWorkdaySafePass(
 
     const auditEntries: AuditLogEntry[] = [];
     await withTimeout(
-      executeWorkdayFillPlan({
-      plan: prepared.plan,
-      isAlreadyVerified: (fieldKey) => getWorkdaySafeModeState(sessionId).verifiedFieldKeys.has(fieldKey),
-      getLatestMetrics: async (field) => {
-        const [metric] = await withTimeout(
-          readWorkdayFieldMetrics(prepared.runtime.page, [field]),
-          WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
-          `Timed out locating ${field.label || field.name || "field"} on the Workday page.`
-        );
-        return {
-          top: metric?.top ?? Number.MAX_SAFE_INTEGER,
-          inViewport: metric?.inViewport ?? false,
-          sectionKey: metric?.sectionKey || "page"
-        };
-      },
-      scrollToField: async (field) => {
-        await withTimeout(
-          scrollWorkdayFieldIntoView(prepared.runtime.page, field),
-          WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
-          `Timed out scrolling ${field.label || field.name || "field"} into view.`
-        );
-      },
-      fillOneField: async (field) => {
-        try {
-          const verification = await withTimeout(
-            fillField(prepared.runtime.page, field, field.suggestedValue, {
-              allowRetry: false,
-              highlight: false,
-              preferDirectInput: true
-            }),
-            WORKDAY_FIELD_FILL_TIMEOUT_MS,
-            `Timed out filling ${field.label || field.name || "field"} on the Workday page.`
-          );
-          field.detectedValue = verification.actualValue || field.suggestedValue;
-          field.status = "filled";
-          field.verificationStatus = "verified";
-          field.verificationMessage = verification.message;
-          field.commitState = verification.commitState;
-          field.reason = `${field.reason} Filled during Workday safe mode.`;
-          const fieldKey = buildWorkdayFieldKey(field);
-          verifiedFieldKeys.push(fieldKey);
-          auditEntries.push(
-            createAuditEntry(sessionId, "field_filled", `Filled ${field.label || field.name || "field"} in Workday safe mode.`, {
-              fieldId: field.id,
-              reason: "ApplyPilot filled this deterministic text field during a single controlled pass."
-            })
-          );
-          return true;
-        } catch (error) {
-          field.status = "needs_review";
-          field.verificationStatus = "failed";
-          field.verificationMessage = humanizeError(error);
-          field.commitState = (error as { commitState?: DetectedField["commitState"] }).commitState ?? "unresolved";
-          field.reason = "ApplyPilot does not support this control yet";
-          auditEntries.push(
-            createAuditEntry(sessionId, "needs_review", `Left ${field.label || field.name || "field"} for manual review.`, {
-              fieldId: field.id,
-              reason: field.verificationMessage
-            })
-          );
-          return false;
-        }
-      }
-    }),
+      timing.measureStage("plan_execute", () =>
+        executeWorkdayFillPlan({
+          plan: prepared.plan,
+          isAlreadyVerified: (fieldKey) => getWorkdaySafeModeState(sessionId).verifiedFieldKeys.has(fieldKey),
+          getLatestMetrics: async (field) => {
+            const locateStartedAt = Date.now();
+            const [metric] = await withTimeout(
+              readWorkdayFieldMetrics(prepared.runtime.page, [field]),
+              WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
+              `Timed out locating ${field.label || field.name || "field"} on the Workday page.`
+            );
+            timing.recordFieldStep(field, "locateMs", Date.now() - locateStartedAt);
+            return {
+              top: metric?.top ?? Number.MAX_SAFE_INTEGER,
+              inViewport: metric?.inViewport ?? false,
+              sectionKey: metric?.sectionKey || "page"
+            };
+          },
+          scrollToField: async (field) => {
+            const scrollStartedAt = Date.now();
+            await withTimeout(
+              scrollWorkdayFieldIntoView(prepared.runtime.page, field),
+              WORKDAY_FIELD_RESOLUTION_TIMEOUT_MS * 2,
+              `Timed out scrolling ${field.label || field.name || "field"} into view.`
+            );
+            timing.recordFieldStep(field, "scrollMs", Date.now() - scrollStartedAt);
+          },
+          fillOneField: async (field) => {
+            const fillStartedAt = Date.now();
+            try {
+              const verification = await withTimeout(
+                fillField(prepared.runtime.page, field, field.suggestedValue, {
+                  allowRetry: false,
+                  highlight: false,
+                  preferDirectInput: true
+                }),
+                WORKDAY_FIELD_FILL_TIMEOUT_MS,
+                `Timed out filling ${field.label || field.name || "field"} on the Workday page.`
+              );
+              timing.recordFieldStep(field, "fillMs", Date.now() - fillStartedAt);
+              field.detectedValue = verification.actualValue || field.suggestedValue;
+              field.status = "filled";
+              field.verificationStatus = "verified";
+              field.verificationMessage = verification.message;
+              field.commitState = verification.commitState;
+              field.reason = `${field.reason} Filled during Workday safe mode.`;
+              const fieldKey = buildWorkdayFieldKey(field);
+              verifiedFieldKeys.push(fieldKey);
+              auditEntries.push(
+                createAuditEntry(sessionId, "field_filled", `Filled ${field.label || field.name || "field"} in Workday safe mode.`, {
+                  fieldId: field.id,
+                  reason: "ApplyPilot filled this deterministic text field during a single controlled pass."
+                })
+              );
+              timing.finishField(field, "verified", verification.message);
+              return true;
+            } catch (error) {
+              timing.recordFieldStep(field, "fillMs", Date.now() - fillStartedAt);
+              field.status = "needs_review";
+              field.verificationStatus = "failed";
+              field.verificationMessage = humanizeError(error);
+              field.commitState = (error as { commitState?: DetectedField["commitState"] }).commitState ?? "unresolved";
+              field.reason = "ApplyPilot does not support this control yet";
+              auditEntries.push(
+                createAuditEntry(sessionId, "needs_review", `Left ${field.label || field.name || "field"} for manual review.`, {
+                  fieldId: field.id,
+                  reason: field.verificationMessage
+                })
+              );
+              timing.finishField(field, "manual_review", field.verificationMessage);
+              return false;
+            }
+          }
+        })
+      ),
       WORKDAY_PASS_TIMEOUT_MS,
       "Workday safe pass timed out before the page settled."
     );
@@ -534,13 +560,16 @@ export async function runWorkdaySafePass(
     if (resumeField) {
       try {
         const verification = await withTimeout(
-          fillField(prepared.runtime.page, resumeField, resumeField.suggestedValue, {
-            allowRetry: false,
-            highlight: false
-          }),
+          timing.measureStage("resume_upload", () =>
+            fillField(prepared.runtime.page, resumeField, resumeField.suggestedValue, {
+              allowRetry: false,
+              highlight: false
+            })
+          ),
           WORKDAY_FIELD_FILL_TIMEOUT_MS,
           "Timed out uploading the resume on the Workday page."
         );
+        timing.finishField(resumeField, "verified", verification.message);
         resumeField.detectedValue = verification.actualValue || resumeField.suggestedValue.split(/[\\/]/).pop() || "";
         resumeField.status = "filled";
         resumeField.verificationStatus = "verified";
@@ -556,6 +585,7 @@ export async function runWorkdaySafePass(
           })
         );
       } catch (error) {
+        timing.finishField(resumeField, "manual_review", humanizeError(error));
         resumeField.status = "needs_review";
         resumeField.verificationStatus = "failed";
         resumeField.verificationMessage = humanizeError(error);
@@ -574,12 +604,14 @@ export async function runWorkdaySafePass(
     recordDiagnostic?.("pass_finished");
     recordApplicationTransitionEvent(sessionId, "overlay_updated", prepared.runtime.page.url());
 
-    let updated = await saveDetectedFields(
-      sessionId,
-      prepared.safeFields,
-      prepared.prepared.pageSummary.warnings,
-      prepared.prepared.pageSummary.finalSubmitButtons,
-      prepared.runtime.page.url()
+    let updated = await timing.measureStage("persist_fields", () =>
+      saveDetectedFields(
+        sessionId,
+        prepared.safeFields,
+        prepared.prepared.pageSummary.warnings,
+        prepared.prepared.pageSummary.finalSubmitButtons,
+        prepared.runtime.page.url()
+      )
     );
     for (const field of prepared.safeFields) {
       if (field.status === "filled" && field.verificationStatus === "verified") {
@@ -593,33 +625,37 @@ export async function runWorkdaySafePass(
       }
     }
 
-    updated = await updateApplicationSession(sessionId, (current) => ({
-      ...current,
-      atsProvider: "workday",
-      status:
-        prepared.mode === "account_assist"
-          ? "waiting_for_user"
-          : current.detectedFields.some((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
-            ? "needs_review"
-            : "ready_for_submission",
-      statusMessage:
-        prepared.mode === "account_assist"
-          ? "Create account required."
-          : current.fieldsFilledAndVerified > 0
-            ? "Finished a controlled Workday pass."
-            : "Nothing safe was filled on this page.",
-      nextAction:
-        prepared.mode === "account_assist"
-          ? "Finish the password, verification, and any legal steps in the browser. ApplyPilot will continue after the application form opens."
-          : "Review the remaining fields in the browser. ApplyPilot did not select any uncertain answers.",
-      captchaDetection: prepared.prepared.captchaDetection
-    }));
+    updated = await timing.measureStage("status_update", () =>
+      updateApplicationSession(sessionId, (current) => ({
+        ...current,
+        atsProvider: "workday",
+        status:
+          prepared.mode === "account_assist"
+            ? "waiting_for_user"
+            : current.detectedFields.some((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status))
+              ? "needs_review"
+              : "ready_for_submission",
+        statusMessage:
+          prepared.mode === "account_assist"
+            ? "Create account required."
+            : current.fieldsFilledAndVerified > 0
+              ? "Finished a controlled Workday pass."
+              : "Nothing safe was filled on this page.",
+        nextAction:
+          prepared.mode === "account_assist"
+            ? "Finish the password, verification, and any legal steps in the browser. ApplyPilot will continue after the application form opens."
+            : "Review the remaining fields in the browser. ApplyPilot did not select any uncertain answers.",
+        captchaDetection: prepared.prepared.captchaDetection
+      }))
+    );
 
-    await appendAuditEntry(
-      sessionId,
-      createAuditEntry(sessionId, "autofill_run_completed", "Completed a single Workday safe-mode pass.", {
-        reason: summarizeWorkdayPassResult(prepared.safeFields)
-      })
+    await timing.measureStage("completion_audit", () =>
+      appendAuditEntry(
+        sessionId,
+        createAuditEntry(sessionId, "autofill_run_completed", "Completed a single Workday safe-mode pass.", {
+          reason: summarizeWorkdayPassResult(prepared.safeFields)
+        })
+      )
     );
 
     const committed = prepared.safeFields.filter((field) => field.status === "filled" && field.verificationStatus === "verified").length;
@@ -636,13 +672,28 @@ export async function runWorkdaySafePass(
       tenant: prepared.tenant,
       formReached: prepared.mode === "application_form",
       resumedAfterBarrier: prepared.resumedAfterBarrier,
-      detectedAt: new Date().toISOString()
+      detectedAt: new Date().toISOString(),
+      timing: timing.snapshot()
     }).catch(() => undefined);
 
     return updated;
   } catch (error) {
     failWorkdayPass(sessionId);
     recordDiagnostic?.("failure_reason", humanizeError(error));
+    await writeWorkdayOverlayDiagnostic({
+      sessionId,
+      eventLog: getApplicationTransitionDiagnostics(sessionId).eventLog.map((item) => ({ event: item.event, detail: item.detail })),
+      safeFieldsPlanned: prepared.plan.length,
+      committed: prepared.safeFields.filter((field) => field.status === "filled" && field.verificationStatus === "verified").length,
+      unresolved: prepared.safeFields.filter((field) => ["needs_review", "sensitive", "unknown", "error"].includes(field.status)).length,
+      barrierType: prepared.barrierKind,
+      tenant: prepared.tenant,
+      formReached: prepared.mode === "application_form",
+      resumedAfterBarrier: prepared.resumedAfterBarrier,
+      detectedAt: new Date().toISOString(),
+      failureReason: humanizeError(error),
+      timing: timing.snapshot()
+    }).catch(() => undefined);
     throw error;
   }
 }

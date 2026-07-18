@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DetectedField } from "@/types";
+import { WorkdayTimingSnapshot } from "@/lib/workdayTiming";
 
 const DIAGNOSTIC_DIR = path.join(process.cwd(), "debug", "applypilot-diagnostics");
 
@@ -31,6 +32,7 @@ type WorkdayOverlaySummary = {
   failureReason?: string;
   barrierReason?: string;
   barrierEvidence?: Record<string, unknown>;
+  timing?: WorkdayTimingSnapshot;
 };
 
 function summarizeGenericPass(sessionId: string, atsProvider: string, fields: DetectedField[]): GenericPassSummary {
