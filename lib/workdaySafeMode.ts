@@ -238,6 +238,12 @@ export function completeWorkdayPass(sessionId: string, verifiedFieldKeys: string
   state.inProgress = false;
 }
 
+export function resetWorkdayVerifiedFields(sessionId: string) {
+  const state = getWorkdaySafeModeState(sessionId);
+  state.verifiedFieldKeys = new Set<string>();
+  return state;
+}
+
 export function failWorkdayPass(sessionId: string) {
   const state = getWorkdaySafeModeState(sessionId);
   state.inProgress = false;
@@ -320,6 +326,38 @@ function normalizePhoneCountryCodeAlias(value: string) {
   return normalizeText(value).replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function comparableCurrentValue(value: string, intent: FieldIntent) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (["phone", "phone_number", "full_phone_number", "phone_country_code", "phone_extension", "phone_device_type"].includes(intent)) {
+    const digits = trimmed.replace(/\D/g, "");
+    if (digits) return digits;
+  }
+
+  return normalizeText(trimmed);
+}
+
+function currentValueMatchesTarget(field: Pick<DetectedField, "intent" | "detectedValue" | "suggestedValue" | "matchedOption">) {
+  const target = (field.matchedOption || field.suggestedValue || "").trim();
+  const current = (field.detectedValue || "").trim();
+  if (!target || !current) return false;
+
+  const comparableTarget = comparableCurrentValue(target, field.intent);
+  const comparableCurrent = comparableCurrentValue(current, field.intent);
+  if (!comparableTarget || !comparableCurrent) return false;
+
+  if (["phone", "phone_number", "full_phone_number", "phone_country_code", "phone_extension"].includes(field.intent)) {
+    return (
+      comparableCurrent === comparableTarget ||
+      comparableCurrent.endsWith(comparableTarget) ||
+      comparableTarget.endsWith(comparableCurrent)
+    );
+  }
+
+  return comparableCurrent === comparableTarget;
+}
+
 export function matchExactPhoneCountryCodeOption(options: string[], candidate: string) {
   const normalizedCandidate = normalizePhoneCountryCodeAlias(candidate);
   const canonicalCode =
@@ -346,11 +384,18 @@ export function matchExactPhoneCountryCodeOption(options: string[], candidate: s
   return null;
 }
 
-function clearFieldForManualReview(field: DetectedField, reason: string, status: DetectedField["status"] = "needs_review") {
+function clearFieldForManualReview(
+  field: DetectedField,
+  reason: string,
+  status: DetectedField["status"] = "needs_review",
+  options: { preserveSuggestedValue?: boolean } = {}
+) {
   field.status = status;
   field.reason = reason;
   field.autoFillAllowed = false;
-  field.suggestedValue = "";
+  if (!options.preserveSuggestedValue) {
+    field.suggestedValue = "";
+  }
   field.matchedOption = undefined;
   if (field.verificationStatus === "verified") {
     field.verificationStatus = "not_attempted";
@@ -490,24 +535,32 @@ export function applyWorkdaySafeModeRules(
     const fieldKey = buildWorkdayFieldKey(next);
 
     if (verifiedFieldKeys.has(fieldKey)) {
-      next.status = "filled";
-      next.reason = "Already verified on this page.";
-      next.autoFillAllowed = false;
-      next.verificationStatus = "verified";
-      next.verificationMessage = next.verificationMessage || "This field was already verified during an earlier safe pass.";
-      return next;
+      if (currentValueMatchesTarget(next)) {
+        next.status = "filled";
+        next.reason = "Already present and verified.";
+        next.autoFillAllowed = false;
+        next.verificationStatus = "verified";
+        next.verificationMessage = "This field still matches the target in the current DOM.";
+        return next;
+      }
+
+      next.verificationStatus = "not_attempted";
+      next.verificationMessage = undefined;
+      next.reason = next.detectedValue.trim()
+        ? (next.suggestedValue || next.matchedOption ? "Current value differs from the target." : "Ready to fill.")
+        : "Needs fill.";
     }
 
     if (next.intent === "country") {
       const exactCountryMatch = matchExactCountryAliasOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
       if (isFillableWorkdaySelectControl(next)) {
         if (!exactCountryMatch) {
-          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
           return next;
         }
         next.matchedOption = exactCountryMatch.option;
       } else if (!isFillableWorkdayTextControl(next)) {
-        clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+        clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
         if (exactCountryMatch) {
           next.matchedOption = exactCountryMatch.option;
         }
@@ -519,7 +572,7 @@ export function applyWorkdaySafeModeRules(
       const exactStateMatch = matchExactStateAliasOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
       if (isFillableWorkdaySelectControl(next)) {
         if (!exactStateMatch) {
-          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
           return next;
         }
         next.matchedOption = exactStateMatch.option;
@@ -530,7 +583,7 @@ export function applyWorkdaySafeModeRules(
       const exactPhoneCodeMatch = matchExactPhoneCountryCodeOption(next.selectOptions ?? [], next.suggestedValue || next.detectedValue);
       if (isFillableWorkdaySelectControl(next)) {
         if (!exactPhoneCodeMatch) {
-          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
           return next;
         }
         next.matchedOption = exactPhoneCodeMatch.option;
@@ -545,7 +598,7 @@ export function applyWorkdaySafeModeRules(
 
       if (isFillableWorkdaySelectControl(next)) {
         if (!next.matchedOption) {
-          clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+          clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
           return next;
         }
       }
@@ -563,7 +616,7 @@ export function applyWorkdaySafeModeRules(
       }
 
       if (next.suggestedValue.trim().length > 6) {
-        clearFieldForManualReview(next, "Needs review because the saved value does not look like a short phone extension");
+        clearFieldForManualReview(next, "Needs review because the saved value does not look like a short phone extension", "needs_review", { preserveSuggestedValue: true });
         return next;
       }
 
@@ -579,7 +632,7 @@ export function applyWorkdaySafeModeRules(
 
     if (next.intent === "resume_upload" || next.type === "file") {
       if (!next.suggestedValue.trim()) {
-        clearFieldForManualReview(next, "Resume upload needs verification");
+        clearFieldForManualReview(next, "Resume upload needs verification", "needs_review", { preserveSuggestedValue: true });
         return next;
       }
       markWorkdayResumeField(next, "Resume upload needs verification");
@@ -589,7 +642,7 @@ export function applyWorkdaySafeModeRules(
     if (isFillableWorkdayChoiceControl(next) || isFillableWorkdaySelectControl(next)) {
       if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
         if (!isEligibleWorkdaySensitiveChoiceField(next)) {
-          clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+          clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive", { preserveSuggestedValue: true });
           return next;
         }
 
@@ -606,7 +659,7 @@ export function applyWorkdaySafeModeRules(
     }
 
     if (isHighRiskWorkdayIntent(next.intent) || next.sensitivity === "sensitive") {
-      clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive");
+      clearFieldForManualReview(next, "Sensitive question requires your review", "sensitive", { preserveSuggestedValue: true });
       return next;
     }
 
@@ -621,13 +674,13 @@ export function applyWorkdaySafeModeRules(
     }
 
     if (WORKDAY_REPEATABLE_SECTION_INTENTS.has(next.intent) && !isEligibleWorkdaySafeField(next)) {
-      clearFieldForManualReview(next, "This section requires manual setup");
+      clearFieldForManualReview(next, "This section requires manual setup", "needs_review", { preserveSuggestedValue: true });
       return next;
     }
 
     if (WORKDAY_SAFE_SELECT_INTENTS.has(next.intent) && isFillableWorkdaySelectControl(next)) {
       if (!next.matchedOption) {
-        clearFieldForManualReview(next, "Needs an exact dropdown mapping");
+        clearFieldForManualReview(next, "Needs an exact dropdown mapping", "needs_review", { preserveSuggestedValue: true });
         return next;
       }
       next.status = "needs_review";
@@ -640,18 +693,20 @@ export function applyWorkdaySafeModeRules(
         next,
         next.selectOptions?.length || WORKDAY_UNSUPPORTED_CONTROL_TYPES.has(next.controlType || "")
           ? "Needs an exact dropdown mapping"
-          : "ApplyPilot does not support this control yet"
+          : "ApplyPilot does not support this control yet",
+        "needs_review",
+        { preserveSuggestedValue: true }
       );
       return next;
     }
 
     if (!WORKDAY_SAFE_TEXT_INTENTS.has(next.intent)) {
-      clearFieldForManualReview(next, "ApplyPilot does not support this control yet");
+      clearFieldForManualReview(next, "ApplyPilot does not support this control yet", "needs_review", { preserveSuggestedValue: true });
       return next;
     }
 
     if (!next.suggestedValue.trim() || !next.autoFillAllowed || next.confidence < SAFE_AUTOFILL_THRESHOLD) {
-      clearFieldForManualReview(next, "ApplyPilot does not support this control yet");
+      clearFieldForManualReview(next, "ApplyPilot does not support this control yet", "needs_review", { preserveSuggestedValue: true });
       return next;
     }
 

@@ -12,7 +12,7 @@ import { humanizeError } from "@/lib/safety";
 import { getSettings } from "@/lib/settings";
 import { stopApplicationRuntime } from "@/lib/applicationRuntimeState";
 import { getWorkdayBarrierStatusLabel } from "@/lib/workdayBarrier";
-import { resetWorkdayBarrierHistory } from "@/lib/workdaySafeMode";
+import { resetWorkdayBarrierHistory, resetWorkdayVerifiedFields } from "@/lib/workdaySafeMode";
 import { ApplicationSession, DetectedField } from "@/types";
 
 type OverlayFieldSummary = {
@@ -277,6 +277,7 @@ async function findDetectedFieldForCorrection(session: ApplicationSession, selec
 async function reviewCurrentPage(sessionId: string, session: ApplicationSession, page: Page) {
   if (session.atsProvider === "workday") {
     resetWorkdayBarrierHistory(sessionId);
+    resetWorkdayVerifiedFields(sessionId);
   }
   await waitForPageReadiness(page);
   const prepared = await prepareDetectedFields(sessionId, page, session);
@@ -317,6 +318,9 @@ async function reviewCurrentPage(sessionId: string, session: ApplicationSession,
 }
 
 async function uploadResumeForCurrentPage(sessionId: string, session: ApplicationSession, page: Page) {
+  if (session.atsProvider === "workday") {
+    resetWorkdayVerifiedFields(sessionId);
+  }
   await waitForPageReadiness(page);
   const prepared = await prepareDetectedFields(sessionId, page, session);
   if (prepared.waiting) {
@@ -490,6 +494,7 @@ export async function ensureApplicationOverlayForSession(sessionId: string, page
     const { runAutofillPass } = await import("@/lib/quickApply");
     if (currentSession.atsProvider === "workday") {
       resetWorkdayBarrierHistory(targetSessionId);
+      resetWorkdayVerifiedFields(targetSessionId);
     }
     const updatedSession = await runAutofillPass(targetSessionId, {
       trigger: "manual",

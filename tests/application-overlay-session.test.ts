@@ -49,6 +49,25 @@ test("overlay buckets keep manual-review fields out of recognized results and se
   assert.equal(unresolved[0]?.status, "Needs review");
 });
 
+test("overlay buckets preserve a saved target during manual review instead of claiming no saved answer", () => {
+  const { unresolved } = buildOverlayFieldBuckets([
+    field({
+      label: "State*",
+      intent: "state",
+      suggestedValue: "Massachusetts",
+      detectedValue: "Select One",
+      status: "needs_review",
+      reason: "Needs an exact dropdown mapping",
+      answerSource: "explicit_profile",
+      controlType: "menu_button"
+    })
+  ]);
+
+  assert.equal(unresolved[0]?.target, "Massachusetts");
+  assert.equal(unresolved[0]?.source, "Saved profile");
+  assert.notEqual(unresolved[0]?.target, "No saved answer");
+});
+
 test("overlay buckets show failed attempts once and hide generic helper controls", () => {
   const { recognized, unresolved } = buildOverlayFieldBuckets([
     field({

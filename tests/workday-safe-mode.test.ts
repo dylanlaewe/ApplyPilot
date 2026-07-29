@@ -14,6 +14,7 @@ import {
   matchExactStateAliasOption,
   getWorkdaySafeModeState,
   matchExactCountryAliasOption,
+  resetWorkdayVerifiedFields,
   resumeWorkdaySafeMode,
   shouldUseWorkdaySafeMode,
   stopWorkdaySafeMode
@@ -241,7 +242,7 @@ test("saved Brown-style Workday choice questions stay eligible only with an exac
   assert.equal(referralSource.suggestedValue, "Company Website");
 
   assert.equal(unresolvedSponsorship.status, "sensitive");
-  assert.equal(unresolvedSponsorship.suggestedValue, "");
+  assert.equal(unresolvedSponsorship.suggestedValue, "No");
   assert.equal(unresolvedSponsorship.reason, "Sensitive question requires your review");
 });
 
@@ -258,7 +259,7 @@ test("Workday country dropdowns remain manual when no exact safe option exists",
   ]);
 
   assert.equal(country.status, "needs_review");
-  assert.equal(country.suggestedValue, "");
+  assert.equal(country.suggestedValue, "United States");
   assert.equal(country.reason, "Needs an exact dropdown mapping");
   assert.equal(country.matchedOption, undefined);
 });
@@ -318,7 +319,7 @@ test("Workday phone country code dropdowns stay manual when only unsafe +1 varia
   ]);
 
   assert.equal(phoneCountryCode.status, "needs_review");
-  assert.equal(phoneCountryCode.suggestedValue, "");
+  assert.equal(phoneCountryCode.suggestedValue, "United States (+1)");
   assert.equal(phoneCountryCode.reason, "Needs an exact dropdown mapping");
   assert.equal(phoneCountryCode.matchedOption, undefined);
 });
@@ -675,11 +676,51 @@ test("verified Workday fields are left alone on the same page", () => {
   state.verifiedFieldKeys = new Set([buildWorkdayFieldKey(field({ id: "verified-field", label: "First name" }))]);
 
   const [verifiedField] = applyWorkdaySafeModeRules(
-    [field({ id: "verified-field", label: "First name" })],
+    [field({ id: "verified-field", label: "First name", detectedValue: "Avery", suggestedValue: "Avery" })],
     { verifiedFieldKeys: state.verifiedFieldKeys }
   );
 
   assert.equal(verifiedField.status, "filled");
   assert.equal(verifiedField.verificationStatus, "verified");
-  assert.equal(verifiedField.reason, "Already verified on this page.");
+  assert.equal(verifiedField.reason, "Already present and verified.");
+});
+
+test("cleared Workday fields invalidate prior verified status on the same page", () => {
+  const sessionId = `workday-cleared-${Date.now()}`;
+  const state = getWorkdaySafeModeState(sessionId);
+  state.pageIdentity = "page-a";
+  state.verifiedFieldKeys = new Set([buildWorkdayFieldKey(field({ id: "verified-field", label: "First name" }))]);
+
+  const [verifiedField] = applyWorkdaySafeModeRules(
+    [field({ id: "verified-field", label: "First name", detectedValue: "", suggestedValue: "Avery" })],
+    { verifiedFieldKeys: state.verifiedFieldKeys }
+  );
+
+  assert.equal(verifiedField.status, "needs_review");
+  assert.equal(verifiedField.verificationStatus, "not_attempted");
+  assert.equal(verifiedField.reason, "Needs fill. Safe to autofill on this Workday page.");
+});
+
+test("Workday step changes clear prior verified cache before the next pass", () => {
+  const sessionId = `workday-step-change-${Date.now()}`;
+  resumeWorkdaySafeMode(sessionId);
+
+  const first = beginWorkdayPass(sessionId, "page-a");
+  assert.equal(first.allowed, true);
+  completeWorkdayPass(sessionId, ["verified-one"]);
+  assert.equal(getWorkdaySafeModeState(sessionId).verifiedFieldKeys.size, 1);
+
+  const second = beginWorkdayPass(sessionId, "page-b");
+  assert.equal(second.allowed, true);
+  assert.equal(getWorkdaySafeModeState(sessionId).verifiedFieldKeys.size, 0);
+});
+
+test("resetWorkdayVerifiedFields clears per-page verification cache", () => {
+  const sessionId = `workday-reset-${Date.now()}`;
+  const state = getWorkdaySafeModeState(sessionId);
+  state.verifiedFieldKeys = new Set(["one", "two"]);
+
+  resetWorkdayVerifiedFields(sessionId);
+
+  assert.equal(getWorkdaySafeModeState(sessionId).verifiedFieldKeys.size, 0);
 });
