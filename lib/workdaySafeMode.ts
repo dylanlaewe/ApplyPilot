@@ -687,6 +687,7 @@ export async function executeWorkdayFillPlan({
   let attemptedCount = 0;
   let completedCount = 0;
   let skippedVerifiedCount = 0;
+  const latestMetricsCache = new Map<string, Pick<WorkdayPlannedField, "top" | "inViewport" | "sectionKey">>();
 
   for (const item of plan) {
     if (isAlreadyVerified(item.fieldKey)) {
@@ -694,9 +695,21 @@ export async function executeWorkdayFillPlan({
       continue;
     }
 
-    const latestMetrics = await getLatestMetrics(item.field);
-    const sectionKey = latestMetrics.sectionKey || item.sectionKey || "page";
-    if (!latestMetrics.inViewport && !scrolledSections.has(sectionKey)) {
+    let latestMetrics = latestMetricsCache.get(item.field.id);
+    const sectionKey = latestMetrics?.sectionKey || item.sectionKey || "page";
+    const needsFreshMetrics = !latestMetrics && !item.inViewport && !scrolledSections.has(sectionKey);
+
+    if (needsFreshMetrics) {
+      latestMetrics = await getLatestMetrics(item.field);
+      latestMetricsCache.set(item.field.id, latestMetrics);
+    }
+
+    const effectiveMetrics = latestMetrics ?? {
+      top: item.top,
+      inViewport: item.inViewport || scrolledSections.has(sectionKey),
+      sectionKey
+    };
+    if (!effectiveMetrics.inViewport && !scrolledSections.has(sectionKey)) {
       await scrollToField(item.field);
       scrolledSections.add(sectionKey);
     }

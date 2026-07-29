@@ -587,6 +587,51 @@ test("Workday execution plan keeps going after one field needs manual review", a
   assert.equal(result.completedCount, 2);
 });
 
+test("Workday execution plan reuses planned visibility when fresh metrics are not needed", async () => {
+  const first = field({ id: "first", label: "First name", selector: "#first", intent: "first_name" });
+  const second = field({ id: "second", label: "Last name", selector: "#last", intent: "last_name", suggestedValue: "Example" });
+  const third = field({ id: "third", label: "City", selector: "#city", intent: "city", suggestedValue: "Boston" });
+
+  const plan = buildWorkdayExecutionPlan(
+    [first, second, third],
+    [
+      { fieldId: "first", top: 100, bottom: 140, inViewport: true, sectionKey: "contact" },
+      { fieldId: "second", top: 180, bottom: 220, inViewport: true, sectionKey: "contact" },
+      { fieldId: "third", top: 260, bottom: 300, inViewport: false, sectionKey: "address" }
+    ]
+  );
+
+  const metricReads: string[] = [];
+  const scrolled: string[] = [];
+  const filled: string[] = [];
+
+  const result = await executeWorkdayFillPlan({
+    plan,
+    isAlreadyVerified: () => false,
+    getLatestMetrics: async (current) => {
+      metricReads.push(current.id);
+      const metric = plan.find((item) => item.field.id === current.id);
+      return {
+        top: metric?.top ?? 0,
+        inViewport: metric?.inViewport ?? false,
+        sectionKey: metric?.sectionKey || "page"
+      };
+    },
+    scrollToField: async (current) => {
+      scrolled.push(current.id);
+    },
+    fillOneField: async (current) => {
+      filled.push(current.id);
+      return true;
+    }
+  });
+
+  assert.deepEqual(metricReads, ["third"]);
+  assert.deepEqual(scrolled, ["third"]);
+  assert.deepEqual(filled, ["first", "second", "third"]);
+  assert.equal(result.completedCount, 3);
+});
+
 test("overlay exposes only restrained actions with keyboard-friendly markup", () => {
   assert.deepEqual(WORKDAY_OVERLAY_ACTIONS, [
     "Fill this page",
