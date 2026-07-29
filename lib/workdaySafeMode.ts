@@ -371,6 +371,14 @@ function markOptionalWorkdayField(field: DetectedField, reason: string) {
   }
 }
 
+function looksLikeMisclassifiedPhoneExtensionValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/\+\d{1,4}\b/.test(trimmed)) return true;
+  if (/[a-z]/i.test(trimmed) && /\(\+\d{1,4}\)|country code|calling code|dialing code/.test(trimmed)) return true;
+  return false;
+}
+
 function markWorkdayResumeField(field: DetectedField, reason: string) {
   field.status = "needs_review";
   field.reason = reason;
@@ -543,8 +551,22 @@ export function applyWorkdaySafeModeRules(
       }
     }
 
-    if (next.intent === "phone_extension" && !next.suggestedValue.trim()) {
-      markOptionalWorkdayField(next, "Optional field with no saved value");
+    if (next.intent === "phone_extension") {
+      if (looksLikeMisclassifiedPhoneExtensionValue(next.suggestedValue)) {
+        markOptionalWorkdayField(next, "Optional field with no saved value");
+        return next;
+      }
+
+      if (!next.suggestedValue.trim()) {
+        markOptionalWorkdayField(next, "Optional field with no saved value");
+        return next;
+      }
+
+      if (next.suggestedValue.trim().length > 6) {
+        clearFieldForManualReview(next, "Needs review because the saved value does not look like a short phone extension");
+        return next;
+      }
+
       return next;
     }
 

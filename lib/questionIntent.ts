@@ -149,6 +149,13 @@ function looksLikePhoneCountryCodeOptions(options: string[]) {
   return countryCodeOptions.length >= 2;
 }
 
+function looksLikePhoneDeviceTypeOptions(options: string[]) {
+  if (!options.length) return false;
+  const normalized = options.map((option) => normalizeText(option));
+  const matches = normalized.filter((option) => /^(home|mobile|work|cell|landline)$/.test(option));
+  return matches.length >= 2;
+}
+
 function looksLikeDemographicSurveyPreamble(text: string) {
   return (
     /equal employment opportunity/.test(text) ||
@@ -165,6 +172,22 @@ export function detectQuestionIntent(field: RawScannedField) {
   const allowedType = mapAllowedType(meta.type, meta.controlType);
   const normalizedName = normalizeText(field.name || "");
   const normalizedDomId = normalizeText(field.domId || "");
+  const directCombined = normalizeText(
+    [
+      field.explicitLabel,
+      field.ariaLabelledByText,
+      field.groupLabel,
+      field.legendText,
+      field.questionContainerText,
+      field.ariaLabel,
+      field.label,
+      field.name,
+      field.domId,
+      field.placeholder
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
   const combined = normalizeText(
     [
       label,
@@ -190,7 +213,33 @@ export function detectQuestionIntent(field: RawScannedField) {
   }
 
   if (
-    !/extension|\bext\b/.test(combined) &&
+    /phone device type|phone type|type of phone|mobile or home phone|home or mobile phone/.test(directCombined) ||
+    (looksLikePhoneDeviceTypeOptions(field.selectOptions ?? []) && /\bphone\b/.test(directCombined || combined))
+  ) {
+    return {
+      intent: "phone_device_type" as const,
+      confidence: 0.99,
+      reason: "The control appears to be the phone device-type selector.",
+      questionText: combined
+    };
+  }
+
+  if (
+    /country phone code|phone country code|calling code|dialing code|phone prefix|mobile country code/.test(directCombined) ||
+    (looksLikePhoneCountryCodeOptions(field.selectOptions ?? []) &&
+      /\bphone\b/.test(directCombined || combined) &&
+      /\bcountry\b/.test(directCombined || combined))
+  ) {
+    return {
+      intent: "phone_country_code" as const,
+      confidence: 0.99,
+      reason: "The control appears to be the phone country-code selector.",
+      questionText: combined
+    };
+  }
+
+  if (
+    !/extension|\bext\b|country phone code|phone country code|phone device type|type of phone|mobile or home phone|home or mobile phone/.test(directCombined || combined) &&
     ((meta.type === "tel" && /\bphone\b/.test(combined)) ||
       /\bphone(?:\s|_|-)?number\b/.test(`${normalizedName} ${normalizedDomId}`) ||
       ((normalizedDomId === "phone" || /\bphone\b/.test(normalizeText(label))) && meta.type === "tel"))
@@ -206,11 +255,10 @@ export function detectQuestionIntent(field: RawScannedField) {
   }
 
   if (
-    (/country phone code|phone country code|calling code|dialing code|phone prefix|mobile country code/.test(combined) ||
-      (((field.domId === "country" || normalizeText(label) === "country" || normalizeText(label) === "items selected") &&
-        /phone/.test(combined)) &&
-        looksLikePhoneCountryCodeOptions(field.selectOptions ?? [])) ||
-      (looksLikePhoneCountryCodeOptions(field.selectOptions ?? []) && /\bphone\b/.test(combined) && /\bcountry\b/.test(combined)))
+    (((field.domId === "country" || normalizeText(label) === "country" || normalizeText(label) === "items selected") &&
+      /phone/.test(combined)) &&
+      looksLikePhoneCountryCodeOptions(field.selectOptions ?? [])) ||
+    (looksLikePhoneCountryCodeOptions(field.selectOptions ?? []) && /\bphone\b/.test(combined) && /\bcountry\b/.test(combined))
   ) {
     return {
       intent: "phone_country_code" as const,

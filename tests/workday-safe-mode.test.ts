@@ -339,6 +339,23 @@ test("optional Workday phone extension is skipped when no saved extension exists
   assert.equal(extension.reason, "Optional field with no saved value");
 });
 
+test("Workday phone extension is skipped instead of using a misclassified country-code value", () => {
+  const [extension] = applyWorkdaySafeModeRules([
+    field({
+      label: "Phone Extension",
+      type: "text",
+      intent: "phone_extension",
+      suggestedValue: "United States of America (+1)",
+      autoFillAllowed: true
+    })
+  ]);
+
+  assert.equal(extension.status, "skipped");
+  assert.equal(extension.reviewCategory, "optional_skipped");
+  assert.equal(extension.suggestedValue, "");
+  assert.equal(extension.reason, "Optional field with no saved value");
+});
+
 test("Workday phone device type stays manual when no saved answer exists", () => {
   const [deviceType] = applyWorkdaySafeModeRules([
     field({

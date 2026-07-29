@@ -215,6 +215,52 @@ test("workday phone device type selectors are classified separately from phone n
   assert.ok(result.confidence >= 0.9);
 });
 
+test("phone device type keeps its intent even when nearby Workday cluster text includes phone number", () => {
+  const field: RawScannedField = {
+    label: "Select One",
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "#phone_device_type",
+    detectedValue: "Select One",
+    controlType: "menu_button",
+    role: "button",
+    questionContainerText: "Phone Device Type",
+    nearbyText: "Phone Device Type Country Phone Code Phone Number Phone Extension",
+    selectOptions: ["Home", "Mobile", "Work"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "phone_device_type");
+  assert.ok(result.confidence >= 0.95);
+});
+
+test("phone country code keeps its intent even when nearby Workday cluster text includes phone number", () => {
+  const field: RawScannedField = {
+    label: "1 item selected, United States of America (+1)",
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "#country_phone_code",
+    detectedValue: "United States of America (+1)",
+    controlType: "menu_button",
+    role: "button",
+    questionContainerText: "Country Phone Code",
+    nearbyText: "Phone Device Type Country Phone Code Phone Number Phone Extension",
+    selectOptions: ["United States of America (+1)", "Canada (+1)", "United Kingdom (+44)"],
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "phone_country_code");
+  assert.ok(result.confidence >= 0.95);
+});
+
 test("workday menu buttons do not derive intent from yes-required style current values", () => {
   const field: RawScannedField = {
     label: "Yes Required",
