@@ -738,6 +738,42 @@ test("Brown-style specialty textareas reuse saved answers from normalized Workda
   assert.match(result.suggestedValue, /full-time opportunity/i);
 });
 
+test("unknown Workday date fields do not reuse saved prose answers", () => {
+  const result = buildAnswerSuggestion({
+    intent: "unknown",
+    field: field("unknown", {
+      type: "text",
+      label: "To",
+      questionContainerText: "Work Experience",
+      nearbyText: "Work Experience Company Job Title From To"
+    }),
+    profile: createProfile(),
+    answerBank: createSyntheticQaAnswerBank()
+  });
+
+  assert.equal(result.answerSource, "unknown");
+  assert.equal(result.suggestedValue, "");
+  assert.match(result.reason, /structured date field/i);
+});
+
+test("unknown GPA fields do not reuse saved school or prose answers", () => {
+  const result = buildAnswerSuggestion({
+    intent: "unknown",
+    field: field("unknown", {
+      type: "text",
+      label: "Overall Result (GPA)",
+      questionContainerText: "Overall Result (GPA)",
+      nearbyText: "School or University Overall Result (GPA)"
+    }),
+    profile: createProfile(),
+    answerBank: createSyntheticQaAnswerBank()
+  });
+
+  assert.equal(result.answerSource, "unknown");
+  assert.equal(result.suggestedValue, "");
+  assert.match(result.reason, /gpa|score field/i);
+});
+
 test("unsupported experience topics stay in review instead of being invented", () => {
   const result = buildAnswerSuggestion({
     intent: "unknown",

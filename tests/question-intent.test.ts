@@ -261,6 +261,53 @@ test("phone country code keeps its intent even when nearby Workday cluster text 
   assert.ok(result.confidence >= 0.95);
 });
 
+test("workday GPA fields stay manual instead of being treated like school fields", () => {
+  const field: RawScannedField = {
+    label: "Overall Result (GPA)",
+    name: "overall_result",
+    domId: "overall_result",
+    type: "text",
+    selector: "#overall_result",
+    detectedValue: "",
+    controlType: "text",
+    questionContainerText: "Overall Result (GPA)",
+    nearbyText: "School or University Overall Result (GPA)",
+    isRequired: false,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "unknown");
+  assert.match(result.reason, /gpa|score field/i);
+});
+
+test("workday work-experience from and to fields map to employment dates", () => {
+  const fromField: RawScannedField = {
+    label: "From",
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "#from",
+    detectedValue: "",
+    controlType: "text",
+    questionContainerText: "Work Experience",
+    nearbyText: "Work Experience Company Job Title From To",
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+  const toField: RawScannedField = {
+    ...fromField,
+    label: "To",
+    selector: "#to",
+    nearbyText: "Work Experience Company Job Title From To"
+  };
+
+  assert.equal(detectQuestionIntent(fromField).intent, "employment_start_date");
+  assert.equal(detectQuestionIntent(toField).intent, "employment_end_date");
+});
+
 test("workday menu buttons do not derive intent from yes-required style current values", () => {
   const field: RawScannedField = {
     label: "Yes Required",

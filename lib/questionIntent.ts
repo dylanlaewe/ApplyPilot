@@ -166,12 +166,17 @@ function looksLikeDemographicSurveyPreamble(text: string) {
   );
 }
 
+function normalizeQuestionLabel(field: RawScannedField) {
+  return normalizeText([field.explicitLabel, field.ariaLabelledByText, field.label, field.ariaLabel].filter(Boolean).join(" "));
+}
+
 export function detectQuestionIntent(field: RawScannedField) {
   const meta = inferFieldMetadata(field);
   const label = meta.label;
   const allowedType = mapAllowedType(meta.type, meta.controlType);
   const normalizedName = normalizeText(field.name || "");
   const normalizedDomId = normalizeText(field.domId || "");
+  const normalizedQuestionLabel = normalizeQuestionLabel(field);
   const directCombined = normalizeText(
     [
       field.explicitLabel,
@@ -206,6 +211,24 @@ export function detectQuestionIntent(field: RawScannedField) {
 
   if (meta.isEmail) {
     return { intent: "email" as const, confidence: 0.99, reason: "The field type is email.", questionText: combined };
+  }
+
+  if (/\bgpa\b|grade point average|overall result/.test(`${directCombined} ${combined}`.trim())) {
+    return {
+      intent: "unknown" as const,
+      confidence: 0.2,
+      reason: "This appears to be a GPA or score field, so ApplyPilot left it for manual review instead of guessing.",
+      questionText: combined
+    };
+  }
+
+  if ((normalizedQuestionLabel === "from" || normalizedQuestionLabel === "to") && /\b(work experience|employment|employer|company|job title|role description)\b/.test(`${directCombined} ${combined}`.trim())) {
+    return {
+      intent: normalizedQuestionLabel === "from" ? ("employment_start_date" as const) : ("employment_end_date" as const),
+      confidence: 0.93,
+      reason: `This ${normalizedQuestionLabel} field appears inside a work-experience section.`,
+      questionText: combined
+    };
   }
 
   if ((field.domId === "country" || normalizeText(label) === "country") && /phone/.test(combined) && (field.role === "combobox" || field.controlType === "aria_combobox")) {

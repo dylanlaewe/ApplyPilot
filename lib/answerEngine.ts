@@ -108,6 +108,69 @@ function isLeverCommittedLocationPicker(intent: FieldIntent, field: RawScannedFi
   return (domId === "location-input" || name === "location") && /no location found|try entering a different location|loading/.test(context);
 }
 
+function looksLikeStructuredDateField(field: RawScannedField) {
+  const text = normalizeText(
+    [
+      field.label,
+      field.questionContainerText,
+      field.groupLabel,
+      field.legendText,
+      field.ariaLabel,
+      field.placeholder,
+      field.nearbyText
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const label = normalizeText([field.explicitLabel, field.ariaLabelledByText, field.label].filter(Boolean).join(" "));
+  const dateType = field.type === "date" || field.type === "month";
+  const explicitDatePrompt = /\b(from date|to date|start date|end date|employment start|employment end|from month|to month)\b/.test(text);
+  const dateFormatHint = /\b(mm\/yyyy|month|year)\b/.test(text);
+  const scopedSection = /\b(work experience|employment|employer|company|school|university|education|degree|field of study)\b/.test(text);
+
+  return dateType || ((label === "from" || label === "to" || explicitDatePrompt || dateFormatHint) && scopedSection);
+}
+
+function looksLikeStructuredScoreField(field: RawScannedField) {
+  const text = normalizeText(
+    [field.label, field.questionContainerText, field.groupLabel, field.legendText, field.ariaLabel, field.placeholder, field.nearbyText]
+      .filter(Boolean)
+      .join(" ")
+  );
+  return /\bgpa\b|grade point average|overall result/.test(text);
+}
+
+function buildStructuredUnknownGuard(field: RawScannedField): AnswerSuggestion | null {
+  if (looksLikeStructuredScoreField(field)) {
+    return {
+      suggestedValue: "",
+      confidence: 0.35,
+      reason: "This looks like a GPA or score field, so ApplyPilot left it for manual review instead of reusing an unrelated saved answer.",
+      autoFillAllowed: false,
+      sensitivity: "review",
+      matchedOption: undefined,
+      answerSource: "unknown",
+      shortAnswer: null
+    };
+  }
+
+  if (looksLikeStructuredDateField(field)) {
+    return {
+      suggestedValue: "",
+      confidence: 0.35,
+      reason: "This looks like a structured date field, so ApplyPilot left it for manual review instead of matching a saved text answer.",
+      autoFillAllowed: false,
+      sensitivity: "review",
+      matchedOption: undefined,
+      answerSource: "unknown",
+      shortAnswer: null
+    };
+  }
+
+  return null;
+}
+
 function selectSensitivity(intent: FieldIntent, source: string) {
   if (source === "unknown") return "review" as const;
   if (isSensitiveIntent(intent)) return "sensitive" as const;
@@ -236,6 +299,10 @@ export function buildAnswerSuggestion({
 }): AnswerSuggestion {
   const questionCandidates = buildAnswerBankQuestionCandidates(field);
   const questionText = questionCandidates[0] || combinedQuestion(field);
+  const structuredUnknownGuard = intent === "unknown" ? buildStructuredUnknownGuard(field) : null;
+  if (structuredUnknownGuard) {
+    return structuredUnknownGuard;
+  }
   const answerMatch = matchAnswerBankItem(questionCandidates, answerBank);
   const shortAnswer = buildShortAnswerSuggestion({
     intent,
