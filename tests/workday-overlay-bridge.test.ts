@@ -162,21 +162,21 @@ test("overlay actions run on the page where the user clicked, not an older tab i
 
 test("expanded overlay scrolls internally on smaller viewports", async () => {
   if (!browser) return test.skip(launchError?.message ?? "Playwright launch is unavailable in this sandboxed test environment.");
-  await page.setViewportSize({ width: 1280, height: 360 });
+  await page.setViewportSize({ width: 1280, height: 340 });
   await page.setContent("<html><body><main style=\"height: 2000px;\">Application form</main></body></html>");
 
   await registerApplicationOverlayBridge(page, async () => ({
     ok: true,
     status: "Finished",
     message: "Ready for review",
-    recognized: Array.from({ length: 12 }, (_, index) => ({
+    recognized: Array.from({ length: 24 }, (_, index) => ({
       label: `Recognized field ${index + 1}`,
       status: "Filled and verified",
       intent: "text",
       source: "Saved profile",
       controlType: "text"
     })),
-    unresolved: Array.from({ length: 12 }, (_, index) => ({
+    unresolved: Array.from({ length: 24 }, (_, index) => ({
       label: `Needs review ${index + 1}`,
       reason: "Requires manual confirmation",
       controlType: "select"
@@ -199,27 +199,38 @@ test("expanded overlay scrolls internally on smaller viewports", async () => {
 
   await page.waitForFunction(() => {
     const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    const panelFooter = document.querySelector("#applypilot-overlay .panel-footer");
+    const panelHeader = document.querySelector("#applypilot-overlay .panel-header");
     const details = document.querySelector("#applypilot-overlay details");
     const probe = document.querySelector('#applypilot-overlay [data-role="scroll-probe"]');
-    if (!(panelBody instanceof HTMLElement) || !(details instanceof HTMLDetailsElement) || !(probe instanceof HTMLElement)) {
+    if (!(panelBody instanceof HTMLElement) || !(panelFooter instanceof HTMLElement) || !(panelHeader instanceof HTMLElement) || !(details instanceof HTMLDetailsElement) || !(probe instanceof HTMLElement)) {
       return false;
     }
     const styles = window.getComputedStyle(panelBody);
-    return details.open && styles.overflowY === "auto" && panelBody.scrollHeight > panelBody.clientHeight && probe.offsetHeight > panelBody.clientHeight;
+    return (
+      details.open &&
+      styles.overflowY === "auto" &&
+      panelBody.scrollHeight > panelBody.clientHeight &&
+      probe.offsetHeight > panelBody.clientHeight &&
+      panelFooter.getBoundingClientRect().bottom <= window.innerHeight &&
+      panelHeader.getBoundingClientRect().top >= 0
+    );
   });
 
   await page.evaluate(() => {
-    const stopButton = document.querySelector('#applypilot-overlay button[data-action="stop"]');
-    if (stopButton instanceof HTMLElement) {
-      stopButton.scrollIntoView({ block: "nearest" });
+    const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    if (panelBody instanceof HTMLElement) {
+      panelBody.scrollTop = panelBody.scrollHeight;
     }
   });
 
   const metrics = await page.evaluate(() => {
     const panelBody = document.querySelector("#applypilot-overlay .panel-body");
+    const panelHeader = document.querySelector("#applypilot-overlay .panel-header");
+    const panelFooter = document.querySelector("#applypilot-overlay .panel-footer");
     const details = document.querySelector("#applypilot-overlay details");
     const stopButton = document.querySelector('#applypilot-overlay button[data-action="stop"]');
-    if (!(panelBody instanceof HTMLElement) || !(details instanceof HTMLElement)) {
+    if (!(panelBody instanceof HTMLElement) || !(panelHeader instanceof HTMLElement) || !(panelFooter instanceof HTMLElement) || !(details instanceof HTMLElement)) {
       return null;
     }
     return {
@@ -231,6 +242,11 @@ test("expanded overlay scrolls internally on smaller viewports", async () => {
       viewportHeight: window.innerHeight,
       panelBodyScrollHeight: panelBody.scrollHeight,
       panelBodyClientHeight: panelBody.clientHeight,
+      panelBodyScrollTop: panelBody.scrollTop,
+      headerTop: panelHeader.getBoundingClientRect().top,
+      headerBottom: panelHeader.getBoundingClientRect().bottom,
+      footerTop: panelFooter.getBoundingClientRect().top,
+      footerBottom: panelFooter.getBoundingClientRect().bottom,
       stopButtonTop: stopButton instanceof HTMLElement ? stopButton.getBoundingClientRect().top : null,
       stopButtonBottom: stopButton instanceof HTMLElement ? stopButton.getBoundingClientRect().bottom : null
     };
@@ -243,6 +259,10 @@ test("expanded overlay scrolls internally on smaller viewports", async () => {
   assert.ok(metrics.panelBottom <= metrics.viewportHeight);
   assert.ok(metrics.panelHeight < metrics.viewportHeight);
   assert.ok(metrics.panelBodyScrollHeight > metrics.panelBodyClientHeight);
-  assert.ok(metrics.stopButtonTop !== null && metrics.stopButtonTop >= metrics.panelTop);
+  assert.ok(metrics.panelBodyScrollTop > 0);
+  assert.ok(metrics.headerTop >= 0);
+  assert.ok(metrics.headerBottom <= metrics.footerTop);
+  assert.ok(metrics.footerBottom <= metrics.viewportHeight);
+  assert.ok(metrics.stopButtonTop !== null && metrics.stopButtonTop >= metrics.footerTop);
   assert.ok(metrics.stopButtonBottom !== null && metrics.stopButtonBottom <= metrics.viewportHeight);
 });
