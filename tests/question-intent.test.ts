@@ -261,6 +261,28 @@ test("phone country code keeps its intent even when nearby Workday cluster text 
   assert.ok(result.confidence >= 0.95);
 });
 
+test("Brown-style referral menu buttons use the real question text instead of the current selected value", () => {
+  const field: RawScannedField = {
+    label: "Blacks in Higher Ed",
+    name: "",
+    domId: "",
+    type: "text",
+    selector: "#brown_source",
+    detectedValue: "Blacks in Higher Ed",
+    controlType: "menu_button",
+    role: "button",
+    questionContainerText: "How Did You Hear About Us?",
+    nearbyText: "How Did You Hear About Us?",
+    isRequired: true,
+    isVisible: true,
+    isDisabled: false
+  };
+
+  const result = detectQuestionIntent(field);
+  assert.equal(result.intent, "referral_source");
+  assert.ok(result.confidence >= 0.9);
+});
+
 test("workday GPA fields stay manual instead of being treated like school fields", () => {
   const field: RawScannedField = {
     label: "Overall Result (GPA)",

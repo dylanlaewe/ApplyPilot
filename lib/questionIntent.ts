@@ -112,7 +112,7 @@ const INTENT_PATTERNS: IntentPattern[] = [
       /where did you hear about this (?:opportunity|position|role)/,
       /source/
     ],
-    allowedTypes: ["text", "select-one"]
+    allowedTypes: ["text", "select-one", "search"]
   },
   { intent: "why_interested", patterns: [/why are you interested/, /why this role/, /interested in this role/], allowedTypes: ["textarea", "text"] },
   { intent: "tell_us_about_yourself", patterns: [/tell us about yourself/, /introduce yourself/, /about yourself/], allowedTypes: ["textarea", "text"] },
@@ -325,6 +325,15 @@ export function detectQuestionIntent(field: RawScannedField) {
       if (pattern.test(normalizeText(label))) {
         score = Math.max(score, 0.96);
         reasons.push("Label matched.");
+      }
+      if (
+        pattern.test(normalizedQuestionLabel) ||
+        pattern.test(
+          normalizeText([field.questionContainerText, field.groupLabel, field.legendText].filter(Boolean).join(" "))
+        )
+      ) {
+        score = Math.max(score, 0.97);
+        reasons.push("Question text matched.");
       }
       if (pattern.test(normalizeText(field.name)) || pattern.test(normalizeText(field.domId))) {
         score = Math.max(score, 0.95);

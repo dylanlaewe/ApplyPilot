@@ -969,13 +969,37 @@ async function fillTextControl(
       : value;
 
   const commitTextValue = async () => {
-    await locator.fill(nextValue);
+    await locator.fill(nextValue, options.preferDirectInput ? { timeout: 1_500 } : undefined);
     await locator.evaluate((element) => {
       if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
       element.dispatchEvent(new Event("change", { bubbles: true }));
       element.blur();
     });
   };
+
+  const tryDirectTextValue = async () => {
+    await locator
+      .evaluate((element, directValue) => {
+        if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+          throw new Error("The text field could not be updated directly.");
+        }
+
+        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+        descriptor?.set?.call(element, directValue);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        element.blur();
+      }, nextValue)
+      .catch(() => undefined);
+
+    const directValue = await locator.inputValue().catch(() => "");
+    return directValue === nextValue;
+  };
+
+  if (options.preferDirectInput && (await tryDirectTextValue())) {
+    return nextValue;
+  }
 
   try {
     await commitTextValue();
@@ -996,27 +1020,7 @@ async function fillTextControl(
   }
 
   if (options.preferDirectInput) {
-    await locator
-      .evaluate((element, nextValue) => {
-        if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
-          throw new Error("The text field could not be updated directly.");
-        }
-
-        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-        descriptor?.set?.call(element, nextValue);
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      }, nextValue)
-      .catch(() => undefined);
-
-    const directValue = await locator.inputValue().catch(() => "");
-    if (directValue === nextValue) {
-      await locator.evaluate((element) => {
-        if (element instanceof HTMLElement) {
-          element.blur();
-        }
-      });
+    if (await tryDirectTextValue()) {
       return nextValue;
     }
   }

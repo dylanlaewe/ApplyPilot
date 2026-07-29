@@ -756,6 +756,34 @@ test("phone formatting adapts to the target control before verification", async 
   assert.equal(await page.locator("#phone_field").inputValue(), "(781) 555-1234");
 });
 
+test("preferDirectInput updates readonly Workday-style text fields without waiting on Playwright fill", async () => {
+  if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
+  await page.setContent(`
+    <div class="form-field">
+      <label for="job_title_field">Job Title</label>
+      <input id="job_title_field" type="text" readonly />
+    </div>
+  `);
+
+  const startedAt = Date.now();
+  const result = await fillField(
+    page,
+    detectedField({
+      label: "Job Title",
+      type: "text",
+      selector: "#job_title_field",
+      controlType: "text",
+      intent: "job_title"
+    }),
+    "Business Intelligence / Data Engineering Intern",
+    { preferDirectInput: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(await page.locator("#job_title_field").inputValue(), "Business Intelligence / Data Engineering Intern");
+  assert.ok(Date.now() - startedAt < 3_000);
+});
+
 test("visible values without a committed framework update are rejected", async () => {
   if (!browser) return test.skip("Playwright launch is unavailable in this sandboxed test environment.");
   await page.setContent(`
